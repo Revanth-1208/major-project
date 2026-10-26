@@ -242,7 +242,7 @@ d:\Maj_2
     ├── test_sensor_scenarios_and_status.py # Scenario & hysteresis tests
     ├── test_topology.py                  # Phase 2 IoT Topology unit tests
     ├── test_types_and_contracts.py       # Domain contracts and serialization tests
-    └── test_virtual_sensors.py           # Phase 1 & 2 Test suite (82 total tests)
+    └── test_virtual_sensors.py           # Phase 1 & 2 Test suite (84 total tests)
 ```
 
 ---
@@ -254,7 +254,7 @@ d:\Maj_2
 streamlit run app.py
 ```
 
-### 2. Run the Full Automated Pytest Suite (82 Tests)
+### 2. Run the Full Automated Pytest Suite (84 Tests)
 ```powershell
 python -m pytest tests/
 ```
