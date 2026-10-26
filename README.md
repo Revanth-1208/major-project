@@ -10,6 +10,9 @@ RL-ACK is a modular, interactive research and simulation platform evaluating ack
 - **Adaptive Control**: Deep Q-Network (DQN) controller selecting between five underlying ACK strategies based on an 8-feature network state.
 - **Storage & Analytics**: SQLite persistence and CSV export for experimental verification.
 
+> [!IMPORTANT]
+> **Safety Notice**: All virtual sensor readings, operating ranges, and incident thresholds in this framework are computer-simulated modeling parameters. They are not certified life-safety limits and must never be used as a substitute for calibrated physical safety sensors.
+
 ---
 
 ## Technology Stack
@@ -32,22 +35,78 @@ RL-ACK is a modular, interactive research and simulation platform evaluating ack
 
 The system is partitioned into twelve distinct modules:
 
-1. **Module 1: Project Setup & Architecture** (`rl_ack/config.py`, `rl_ack/common/`, `pyproject.toml`)
-2. **Module 2: Virtual Sensor Engine** (`rl_ack/sensors/`)
-3. **Module 3: System Overview and IoT Topology** (`rl_ack/topology/`)
-4. **Module 4: Sensor Monitoring and Incident Detection** (`rl_ack/monitoring/`)
-5. **Module 5: MQTT Alert Transmission and Delivery Verification** (`rl_ack/mqtt/`)
-6. **Module 6: Six-Policy Comparative Analysis** (`rl_ack/policies/`)
-7. **Module 7: DQN Architecture and Training** (`rl_ack/dqn/`)
-8. **Module 8: DQN Controller Integration** (`rl_ack/controller/`)
-9. **Module 9: Interactive Simulation Runner** (`rl_ack/simulation/`)
-10. **Module 10: Experiment Data Storage** (`rl_ack/storage/`)
-11. **Module 11: Performance Analysis and Export** (`rl_ack/analysis/`)
-12. **Module 12: End-to-End Testing Suite** (`tests/`)
+1. **Module 1: Project Setup & Architecture** (`rl_ack/config.py`, `rl_ack/common/`, `pyproject.toml`) — *Verified*
+2. **Module 2: Virtual Sensor Engine** (`rl_ack/sensors/`) — *Implemented (Phase 1)*
+3. **Module 3: System Overview and IoT Topology** (`rl_ack/topology/`) — *Phase 2*
+4. **Module 4: Sensor Monitoring and Incident Detection** (`rl_ack/monitoring/`) — *Subsequent Phase*
+5. **Module 5: MQTT Alert Transmission and Delivery Verification** (`rl_ack/mqtt/`) — *Subsequent Phase*
+6. **Module 6: Six-Policy Comparative Analysis** (`rl_ack/policies/`) — *Subsequent Phase*
+7. **Module 7: DQN Architecture and Training** (`rl_ack/dqn/`) — *Subsequent Phase*
+8. **Module 8: DQN Controller Integration** (`rl_ack/controller/`) — *Subsequent Phase*
+9. **Module 9: Interactive Simulation Runner** (`rl_ack/simulation/`) — *Subsequent Phase*
+10. **Module 10: Experiment Data Storage** (`rl_ack/storage/`) — *Subsequent Phase*
+11. **Module 11: Performance Analysis and Export** (`rl_ack/analysis/`) — *Subsequent Phase*
+12. **Module 12: End-to-End Testing Suite** (`tests/`) — *Continuous Verification*
 
 ---
 
-## DQN Architecture & Policies
+## Phase 1: Virtual Sensor Engine Architecture
+
+The Virtual Sensor Engine acts as the single source of truth for all telemetry data across the platform.
+
+### Mathematical Dynamics
+Each sensor model is governed by a discrete-time mean-reverting bounded Ornstein-Uhlenbeck stochastic process:
+
+$$x_t = \text{clamp}\Big(x_{t-1} + k \cdot (\mu_t - x_{t-1}) + \sigma \cdot \epsilon_t, \; [\text{min\_value}, \text{max\_value}]\Big)$$
+
+- $\mu_t$: Target baseline under normal conditions, or dynamic target under active environmental incidents.
+- $k \in [0.0, 1.0]$: Mean-reversion pull rate.
+- $\sigma \ge 0.0$: Gaussian noise standard deviation.
+- $\epsilon_t \sim \mathcal{N}(0, 1)$: Pseudorandom variate from a dedicated per-sensor RNG.
+
+### The Four Required Virtual Sensors
+
+| Sensor ID | Type | Measurement | Unit | Interval | Range | Baseline | Threshold | Host Node |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `GAS-001` | `gas` | Gas concentration | `ppm` | 1.0 s | $[0.0, 1000.0]$ | 50.0 ppm | 400.0 ppm | `NODE-001` |
+| `TEMP-001` | `temperature` | Ambient temperature | `°C` | 1.0 s | $[-20.0, 100.0]$ | 24.0 °C | 55.0 °C | `NODE-002` |
+| `HUM-001` | `humidity` | Relative humidity | `% RH` | 2.0 s | $[0.0, 100.0]$ | 45.0 % RH | 85.0 % RH | `NODE-003` |
+| `SMOKE-001` | `smoke` | Optical obscuration | `% obs/m` | 1.0 s | $[0.0, 20.0]$ | 0.2 % obs/m | 3.5 % obs/m | `NODE-004` |
+
+### Sensor Reading Data Contract (`SensorReading`)
+Each generated reading is an immutable-style typed dataclass containing all 10 required fields:
+1. `sensor_id`: Stable instance identifier (e.g. `GAS-001`).
+2. `sensor_type`: Categorical type (`SensorType.GAS`, etc.).
+3. `value`: Finite numeric float clamped to the sensor's physical range.
+4. `unit`: Physical measurement unit string (e.g. `ppm`, `°C`, `% RH`, `% obs/m`).
+5. `simulation_time_s`: Elapsed monotonic simulation clock in seconds.
+6. `timestamp_utc`: ISO 8601 UTC timestamp string (`YYYY-MM-DDTHH:MM:SS.mmmmmm+00:00`).
+7. `sampling_interval_s`: Configured sampling period in seconds.
+8. `host_node_id`: Configured host node identifier.
+9. `status`: Operational status (`NodeOperationalStatus.NORMAL` or `OFFLINE`).
+10. `sequence_number`: Strictly monotonic integer starting at 1 per sensor.
+
+### Simulation Time vs UTC Wall-Clock Time
+- **Simulation Time (`simulation_time_s`)**: Monotonic discrete clock advancing by explicit time increments ($\Delta t$) via the `SensorEngine`. It is unaffected by real-world CPU pauses, thread scheduling, or wall-clock time zones.
+- **UTC Wall-Clock Time (`timestamp_utc`)**: Real-world timestamp recorded at sample generation for auditing and logging purposes.
+
+### Isolated Reproducibility via Fixed Random Seeds
+Every sensor owns an independent `random.Random(seed)` instance. Sampling one sensor does not advance the PRNG state of any other sensor, ensuring that experiments are 100% reproducible regardless of thread or invocation interleaving.
+
+### Environmental Event Injection
+Simulated environmental events (e.g. gas leaks, heat spikes, combustion smoke, humidity changes) are applied programmatically:
+```python
+# Inject gas leak targeting 650.0 ppm for 5 seconds
+engine.trigger_sensor_event("GAS-001", target_value=650.0, duration_s=5.0)
+
+# Clear event early if desired
+engine.clear_sensor_event("GAS-001")
+```
+When an event ends, the sensor returns gradually toward its baseline via mean reversion. Events change the underlying physical model rather than fabricating sample records.
+
+---
+
+## DQN Architecture & Policies (Summary)
 
 ### State Vector (8 Features)
 1. `network_utilization` ($[0.0, 1.0]$)
@@ -89,6 +148,8 @@ d:\Maj_2
 ├── pytest.ini                 # Pytest configuration
 ├── requirements.txt           # Dependency pin specifications
 ├── README.md                  # System overview and usage guide
+├── scripts/
+│   └── demo_sensors.py        # Phase 1 sensor verification demonstration runner
 ├── src/
 │   └── rl_ack/
 │       ├── __init__.py        # Package root and versioning
@@ -100,8 +161,17 @@ d:\Maj_2
 │       │   ├── exceptions.py
 │       │   ├── interfaces.py
 │       │   └── models.py
-│       ├── sensors/           # Module 2: Virtual Sensor Engine
-│       ├── topology/          # Module 3: IoT Topology & Nodes
+│       ├── sensors/           # Module 2: Virtual Sensor Engine (Implemented)
+│       │   ├── __init__.py
+│       │   ├── base_sensor.py
+│       │   ├── config.py
+│       │   ├── demo.py
+│       │   ├── gas_sensor.py
+│       │   ├── humidity_sensor.py
+│       │   ├── sensor_engine.py
+│       │   ├── smoke_sensor.py
+│       │   └── temperature_sensor.py
+│       ├── topology/          # Module 3: IoT Topology & Nodes (Phase 2)
 │       ├── monitoring/        # Module 4: Incident Detection
 │       ├── mqtt/              # Module 5: MQTT Communication & Verification
 │       ├── policies/          # Module 6: Six ACK Policies
@@ -116,24 +186,35 @@ d:\Maj_2
     ├── test_cli.py
     ├── test_config.py
     ├── test_module_boundaries.py
-    └── test_types_and_contracts.py
+    ├── test_types_and_contracts.py
+    └── test_virtual_sensors.py # Phase 1 Test Suite (51 total tests)
 ```
 
 ---
 
-## Quickstart & Verification Commands
+## Execution Commands
 
-### 1. Run the Diagnostic CLI Check
+### 1. Run the Virtual Sensor Verification Demonstration
 ```powershell
-python main.py
+python scripts/demo_sensors.py
 ```
 
-### 2. Run the Full Test Suite
+### 2. Run the Full Automated Test Suite (51 Tests)
 ```powershell
 python -m pytest tests/
 ```
 
-### 3. Launch the Streamlit Dashboard (Smoke Verification)
+### 3. Run the Diagnostic CLI Check
 ```powershell
-streamlit run app.py
+python main.py
 ```
+
+---
+
+## Phase 1 Limitations
+
+In strict adherence to Phase 1 scope:
+- **No MQTT Publishing**: Generated sensor readings are kept in memory and passed directly to callers.
+- **No Alert Generation**: Threshold crossings are flagged as metadata only (`is_threshold_exceeded=True`); incident detection and alert generation are reserved for Module 4.
+- **No Topology Graph**: IoT nodes are referenced by metadata strings (`NODE-001` .. `NODE-004`); interactive graph layout will be built in Phase 2.
+- **No SQLite Storage**: Persistence of sensor readings is scheduled for Module 10.

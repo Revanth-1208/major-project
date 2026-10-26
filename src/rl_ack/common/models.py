@@ -16,26 +16,82 @@ from rl_ack.common.enums import (
 
 @dataclass
 class SensorReading:
-    """Individual virtual sensor telemetry record."""
+    """Individual virtual sensor telemetry record.
+
+    Attributes:
+        sensor_id: Stable identifier for sensor instance.
+        sensor_type: Categorical sensor type.
+        value: Valid finite numeric reading value.
+        unit: Physical engineering or optical measurement unit.
+        simulation_time_s: Elapsed monotonic simulation time in seconds.
+        timestamp_utc: ISO 8601 formatted UTC wall-clock timestamp string.
+        sampling_interval_s: Configured sampling interval for this sensor in seconds.
+        host_node_id: Identifier of the hosting IoT node.
+        status: Operational status of the sensor.
+        sequence_number: Monotonically increasing sequence number per sensor instance.
+        is_threshold_exceeded: Flag indicating if configured threshold was exceeded.
+    """
     sensor_id: str
-    host_node: str
     sensor_type: SensorType
     value: float
     unit: str
-    timestamp: float
-    operational_status: NodeOperationalStatus = NodeOperationalStatus.NORMAL
+    simulation_time_s: float = 0.0
+    timestamp_utc: str = ""
+    sampling_interval_s: float = 1.0
+    host_node_id: str = ""
+    status: NodeOperationalStatus = NodeOperationalStatus.NORMAL
+    sequence_number: int = 0
     is_threshold_exceeded: bool = False
 
+    # Backwards-compatibility aliases for Phase 0 calls
+    host_node: Optional[str] = None
+    timestamp: Optional[float] = None
+    operational_status: Optional[NodeOperationalStatus] = None
+
+    def __post_init__(self) -> None:
+        from datetime import datetime, timezone
+
+        # Synchronize host_node / host_node_id
+        if self.host_node is not None and not self.host_node_id:
+            self.host_node_id = self.host_node
+        elif self.host_node_id and self.host_node is None:
+            self.host_node = self.host_node_id
+
+        # Synchronize timestamp / simulation_time_s
+        if self.timestamp is not None and self.simulation_time_s == 0.0:
+            self.simulation_time_s = float(self.timestamp)
+        elif self.simulation_time_s and self.timestamp is None:
+            self.timestamp = self.simulation_time_s
+
+        # Synchronize status / operational_status
+        if self.operational_status is not None and self.status == NodeOperationalStatus.NORMAL:
+            self.status = self.operational_status
+        elif self.status and self.operational_status is None:
+            self.operational_status = self.status
+
+        # Provide ISO 8601 UTC timestamp if not supplied
+        if not self.timestamp_utc:
+            self.timestamp_utc = datetime.now(timezone.utc).isoformat()
+
     def to_dict(self) -> Dict[str, Any]:
+        s_type = self.sensor_type.value if hasattr(self.sensor_type, "value") else str(self.sensor_type)
+        stat = self.status.value if hasattr(self.status, "value") else str(self.status)
         return {
             "sensor_id": self.sensor_id,
-            "host_node": self.host_node,
-            "sensor_type": self.sensor_type.value,
+            "sensor_type": s_type,
             "value": self.value,
             "unit": self.unit,
-            "timestamp": self.timestamp,
-            "operational_status": self.operational_status.value,
+            "simulation_time_s": self.simulation_time_s,
+            "timestamp_utc": self.timestamp_utc,
+            "sampling_interval_s": self.sampling_interval_s,
+            "host_node_id": self.host_node_id,
+            "status": stat,
+            "sequence_number": self.sequence_number,
             "is_threshold_exceeded": self.is_threshold_exceeded,
+            # Backward-compatibility keys
+            "host_node": self.host_node_id,
+            "timestamp": self.simulation_time_s,
+            "operational_status": stat,
         }
 
 

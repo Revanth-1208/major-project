@@ -62,7 +62,7 @@ st.subheader("📦 Module Boundary Registration (Phase 0)")
 
 modules = [
     ("Module 1", "Project Setup & Architecture", "Configured & Active", True),
-    ("Module 2", "Virtual Sensor Engine (Gas, Temp, Humidity, Smoke)", "Interface Defined (Phase 1)", False),
+    ("Module 2", "Virtual Sensor Engine (Gas, Temp, Humidity, Smoke)", "Implemented (Phase 1)", True),
     ("Module 3", "System Overview & IoT Topology", "Boundary Defined", False),
     ("Module 4", "Sensor Monitoring & Incident Detection", "Boundary Defined", False),
     ("Module 5", "MQTT Alert Transmission & Delivery Verification", "Boundary Defined", False),
