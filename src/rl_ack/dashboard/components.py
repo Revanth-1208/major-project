@@ -503,6 +503,7 @@ def render_policy_comparison_tab(manager: Any) -> None:
             "Evaluation Environment",
             options=["Controlled Simulation (Deterministic)", "Live MQTT Broker (Mosquitto)"],
             index=0,
+            key="policy_eval_mode",
             help="Controlled Simulation enforces identical packet drop & delay events; Live MQTT tests physical sockets.",
         )
     with col_info:
@@ -528,30 +529,30 @@ def render_policy_comparison_tab(manager: Any) -> None:
         st.markdown("##### 🎛️ Controlled Simulation Parameters")
         col_c1, col_c2, col_c3, col_c4 = st.columns(4)
         with col_c1:
-            workload_size = st.slider("Workload Size (Messages)", min_value=10, max_value=100, value=25, step=5)
+            workload_size = st.slider("Workload Size (Messages)", min_value=10, max_value=100, value=25, step=5, key="policy_eval_workload_size")
         with col_c2:
-            seed_val = st.number_input("Deterministic Random Seed", min_value=1, max_value=999999, value=42, step=1)
+            seed_val = st.number_input("Deterministic Random Seed", min_value=1, max_value=999999, value=manager.random_seed, step=1, key="policy_eval_random_seed")
         with col_c3:
-            loss_rate = st.slider("Channel Packet Loss Rate", min_value=0.0, max_value=0.35, value=0.10, step=0.05, format="%.2f")
+            loss_rate = st.slider("Channel Packet Loss Rate", min_value=0.0, max_value=0.35, value=0.10, step=0.05, format="%.2f", key="policy_eval_loss_rate")
         with col_c4:
-            base_lat = st.slider("Base Latency (ms)", min_value=5.0, max_value=60.0, value=15.0, step=5.0)
+            base_lat = st.slider("Base Latency (ms)", min_value=5.0, max_value=60.0, value=15.0, step=5.0, key="policy_eval_base_lat")
 
         with st.expander("🛠️ Advanced Network & Protocol Thresholds", expanded=False):
             col_a1, col_a2, col_a3, col_a4 = st.columns(4)
             with col_a1:
-                jitter_val = st.slider("Stochastic Jitter (ms)", min_value=1.0, max_value=20.0, value=5.0, step=1.0)
+                jitter_val = st.slider("Stochastic Jitter (ms)", min_value=1.0, max_value=20.0, value=5.0, step=1.0, key="policy_eval_jitter")
             with col_a2:
-                ack_loss_rate = st.slider("Reverse ACK Loss Rate", min_value=0.0, max_value=0.25, value=0.05, step=0.05, format="%.2f")
+                ack_loss_rate = st.slider("Reverse ACK Loss Rate", min_value=0.0, max_value=0.25, value=0.05, step=0.05, format="%.2f", key="policy_eval_ack_loss_rate")
             with col_a3:
-                ack_timeout = st.slider("ACK Timeout (ms)", min_value=50.0, max_value=500.0, value=150.0, step=25.0)
+                ack_timeout = st.slider("ACK Timeout (ms)", min_value=50.0, max_value=500.0, value=150.0, step=25.0, key="policy_eval_ack_timeout")
             with col_a4:
-                max_retries = st.slider("Max Retransmissions", min_value=1, max_value=5, value=3, step=1)
-            deadline_val = st.slider("Delivery Latency Deadline (ms)", min_value=50.0, max_value=300.0, value=100.0, step=25.0)
+                max_retries = st.slider("Max Retransmissions", min_value=1, max_value=5, value=3, step=1, key="policy_eval_max_retries")
+            deadline_val = st.slider("Delivery Latency Deadline (ms)", min_value=50.0, max_value=300.0, value=100.0, step=25.0, key="policy_eval_deadline")
     else:
         st.markdown("##### 🔌 Live MQTT Evaluation Configuration")
         col_l1, col_l2 = st.columns(2)
         with col_l1:
-            live_msg_count = st.slider("Live Test Messages", min_value=3, max_value=15, value=5, step=1)
+            live_msg_count = st.slider("Live Test Messages", min_value=3, max_value=15, value=5, step=1, key="policy_eval_live_msg_count")
         with col_l2:
             is_broker_ready = manager.mqtt_manager.is_connected
             status_color = "🟢" if is_broker_ready else "🔴"
@@ -560,7 +561,7 @@ def render_policy_comparison_tab(manager: Any) -> None:
                 st.warning("⚠️ Connect clients in the '📡 MQTT Alert Delivery' tab before running live comparisons.")
 
     # Execution Action Button
-    if st.button("🚀 Run Comparative Policy Evaluation", width="stretch"):
+    if st.button("🚀 Run Comparative Policy Evaluation", width="stretch", key="policy_eval_btn_run"):
         progress_bar = st.progress(0.0)
         status_text = st.empty()
 
@@ -711,7 +712,7 @@ def render_policy_comparison_tab(manager: Any) -> None:
         st.markdown("---")
         st.subheader("📋 Granular Message Evaluation Audit Trail")
         st.caption("Inspect individual message routing, retries, and latency measurements.")
-        selected_pol = st.selectbox("Filter by Policy", options=["All Policies"] + policies)
+        selected_pol = st.selectbox("Filter by Policy", options=["All Policies"] + policies, key="policy_eval_filter_pol")
         if selected_pol != "All Policies":
             filtered_df = df_results[df_results["policy_name"] == selected_pol]
         else:
@@ -730,6 +731,7 @@ def render_policy_comparison_tab(manager: Any) -> None:
                 file_name="rlack_policy_comparison_summary.csv",
                 mime="text/csv",
                 width="stretch",
+                key="policy_eval_btn_download_summary",
             )
         with col_exp2:
             csv_results = manager.export_policy_results_csv()
@@ -739,6 +741,7 @@ def render_policy_comparison_tab(manager: Any) -> None:
                 file_name="rlack_policy_message_results.csv",
                 mime="text/csv",
                 width="stretch",
+                key="policy_eval_btn_download_results",
             )
     else:
         st.info(
@@ -783,37 +786,37 @@ def render_dqn_tab(manager: Any) -> None:
 
         col_h1, col_h2, col_h3 = st.columns(3)
         with col_h1:
-            episodes_val = st.slider("Training Episodes", min_value=3, max_value=60, value=15, step=1)
-            steps_val = st.slider("Steps per Episode", min_value=10, max_value=60, value=30, step=5)
-            seed_val = st.number_input("Deterministic Random Seed", min_value=1, max_value=999999, value=42, step=1)
+            episodes_val = st.slider("Training Episodes", min_value=3, max_value=60, value=15, step=1, key="dqn_train_episodes")
+            steps_val = st.slider("Steps per Episode", min_value=10, max_value=60, value=30, step=5, key="dqn_train_steps")
+            seed_val = st.number_input("Deterministic Random Seed", min_value=1, max_value=999999, value=manager.random_seed, step=1, key="dqn_training_seed", help="Random seed for deterministic training replay.")
         with col_h2:
-            lr_val = st.selectbox("Learning Rate", options=[0.0005, 0.001, 0.002, 0.005], index=1)
-            gamma_val = st.slider("Discount Factor (γ)", min_value=0.80, max_value=0.99, value=0.95, step=0.01)
-            batch_val = st.selectbox("Mini-Batch Size", options=[16, 32, 64], index=1)
+            lr_val = st.selectbox("Learning Rate", options=[0.0005, 0.001, 0.002, 0.005], index=1, key="dqn_train_lr")
+            gamma_val = st.slider("Discount Factor (γ)", min_value=0.80, max_value=0.99, value=0.95, step=0.01, key="dqn_train_gamma")
+            batch_val = st.selectbox("Mini-Batch Size", options=[16, 32, 64], index=1, key="dqn_train_batch_size")
         with col_h3:
-            eps_start = st.slider("Epsilon Start", min_value=0.5, max_value=1.0, value=1.0, step=0.05)
-            eps_min = st.slider("Epsilon Floor", min_value=0.01, max_value=0.20, value=0.05, step=0.01)
-            eps_decay = st.slider("Epsilon Decay / Step", min_value=0.980, max_value=0.999, value=0.995, step=0.001)
+            eps_start = st.slider("Epsilon Start", min_value=0.5, max_value=1.0, value=1.0, step=0.05, key="dqn_train_eps_start")
+            eps_min = st.slider("Epsilon Floor", min_value=0.01, max_value=0.20, value=0.05, step=0.01, key="dqn_train_eps_min")
+            eps_decay = st.slider("Epsilon Decay / Step", min_value=0.980, max_value=0.999, value=0.995, step=0.001, key="dqn_train_eps_decay")
 
         with st.expander("⚖️ Multi-Objective Reward Weights & Penalties", expanded=False):
             st.caption("Configurable terms balancing reliability, latency compliance, packet bloat, and battery depletion.")
             r_c1, r_c2, r_c3 = st.columns(3)
             with r_c1:
-                w_del = st.number_input("Delivery Confirmation Reward", value=10.0, step=1.0)
-                w_cc_bonus = st.number_input("Critical Control (CC) Bonus", value=15.0, step=1.0)
-                w_fail = st.number_input("Delivery Failure Penalty", value=15.0, step=1.0)
+                w_del = st.number_input("Delivery Confirmation Reward", value=10.0, step=1.0, key="dqn_rew_w_del")
+                w_cc_bonus = st.number_input("Critical Control (CC) Bonus", value=15.0, step=1.0, key="dqn_rew_w_cc_bonus")
+                w_fail = st.number_input("Delivery Failure Penalty", value=15.0, step=1.0, key="dqn_rew_w_fail")
             with r_c2:
-                w_cc_fail = st.number_input("CC Lost Alert Penalty", value=25.0, step=1.0)
-                w_ddl_met = st.number_input("Deadline Compliance Bonus", value=5.0, step=1.0)
-                w_ddl_viol = st.number_input("Deadline Violation Penalty", value=10.0, step=1.0)
+                w_cc_fail = st.number_input("CC Lost Alert Penalty", value=25.0, step=1.0, key="dqn_rew_w_cc_fail")
+                w_ddl_met = st.number_input("Deadline Compliance Bonus", value=5.0, step=1.0, key="dqn_rew_w_ddl_met")
+                w_ddl_viol = st.number_input("Deadline Violation Penalty", value=10.0, step=1.0, key="dqn_rew_w_ddl_viol")
             with r_c3:
-                w_lat = st.number_input("Latency Scale Penalty", value=3.0, step=0.5)
-                w_overhead = st.number_input("Overhead Penalty / 100B", value=1.0, step=0.2)
-                w_retry = st.number_input("Retransmission Churn Penalty", value=2.0, step=0.5)
+                w_lat = st.number_input("Latency Scale Penalty", value=3.0, step=0.5, key="dqn_rew_w_lat")
+                w_overhead = st.number_input("Overhead Penalty / 100B", value=1.0, step=0.2, key="dqn_rew_w_overhead")
+                w_retry = st.number_input("Retransmission Churn Penalty", value=2.0, step=0.5, key="dqn_rew_w_retry")
 
         # Trigger Training Button
         btn_disabled = manager.is_dqn_training
-        if st.button("🚀 Start DQN Training Loop", width="stretch", disabled=btn_disabled):
+        if st.button("🚀 Start DQN Training Loop", width="stretch", disabled=btn_disabled, key="dqn_btn_start_training"):
             from rl_ack.dqn.reward import RewardConfig
             reward_cfg = RewardConfig(
                 w_delivery_success=w_del,
@@ -949,6 +952,7 @@ def render_dqn_tab(manager: Any) -> None:
                 file_name="rlack_dqn_training_metrics.csv",
                 mime="text/csv",
                 width="stretch",
+                key="dqn_btn_download_training_csv",
             )
         else:
             st.info("💡 **No Training Run Yet:** Configure hyperparameters above and click **🚀 Start DQN Training Loop** to train the agent.")
@@ -962,13 +966,13 @@ def render_dqn_tab(manager: Any) -> None:
 
         e_col1, e_col2, e_col3 = st.columns(3)
         with e_col1:
-            eval_samples = st.slider("Test Workload Size (Messages)", min_value=15, max_value=80, value=40, step=5)
+            eval_samples = st.slider("Test Workload Size (Messages)", min_value=15, max_value=80, value=40, step=5, key="dqn_eval_samples")
         with e_col2:
-            eval_loss = st.slider("Channel Packet Loss Rate", min_value=0.0, max_value=0.30, value=0.12, step=0.02)
+            eval_loss = st.slider("Channel Packet Loss Rate", min_value=0.0, max_value=0.30, value=0.12, step=0.02, key="dqn_eval_packet_loss_rate")
         with e_col3:
-            eval_seed = st.number_input("Evaluation Random Seed", min_value=1, max_value=999999, value=999, step=1)
+            eval_seed = st.number_input("Evaluation Random Seed", min_value=1, max_value=999999, value=manager.random_seed + 950, step=1, key="dqn_eval_seed")
 
-        if st.button("🚀 Run Comparative Benchmark", width="stretch"):
+        if st.button("🚀 Run Comparative Benchmark", width="stretch", key="dqn_btn_run_benchmark"):
             p_bar = st.progress(0.0)
             s_text = st.empty()
 
@@ -1062,6 +1066,7 @@ def render_dqn_tab(manager: Any) -> None:
                 file_name="rlack_dqn_comparative_benchmark.csv",
                 mime="text/csv",
                 width="stretch",
+                key="dqn_btn_download_eval_csv",
             )
         else:
             st.info("💡 **No Benchmark Run Yet:** Click **🚀 Run Comparative Benchmark** above to evaluate DQN alongside Phase 5 baselines.")
@@ -1076,9 +1081,9 @@ def render_dqn_tab(manager: Any) -> None:
         if available_ckpts:
             col_ck1, col_ck2 = st.columns([2, 1])
             with col_ck1:
-                selected_ckpt = st.selectbox("Available Checkpoints (.pt)", options=available_ckpts)
+                selected_ckpt = st.selectbox("Available Checkpoints (.pt)", options=available_ckpts, key="dqn_selected_checkpoint")
             with col_ck2:
-                if st.button("📥 Load Selected Checkpoint", width="stretch"):
+                if st.button("📥 Load Selected Checkpoint", width="stretch", key="dqn_btn_load_checkpoint"):
                     ok = manager.load_dqn_checkpoint(selected_ckpt)
                     if ok:
                         st.success(f"✅ Successfully loaded `{selected_ckpt}`! Agent weights and epsilon updated.")

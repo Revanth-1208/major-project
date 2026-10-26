@@ -75,3 +75,39 @@ def test_dashboard_components_render_without_exceptions():
     render_preview_charts(manager.get_time_series_df(), sensor_configs=manager.get_sensor_configs())
     render_incident_monitoring_tab(manager)
     render_mqtt_delivery_tab(manager)
+    render_policy_comparison_tab(manager)
+    render_dqn_tab(manager)
+
+
+def test_dqn_tab_populated_rendering():
+    """Verify DQN tab renders cleanly with training curves, evaluation metrics, and checkpoints."""
+    from rl_ack.dashboard.state import DashboardSimulationManager
+    from rl_ack.dashboard.components import render_dqn_tab
+
+    manager = DashboardSimulationManager(random_seed=42)
+
+    # 1. Train 1 quick episode to populate training history
+    manager.train_dqn(num_episodes=1, steps_per_episode=3)
+    assert not manager.get_dqn_training_history_df().empty
+
+    # 2. Run quick evaluation to populate comparative benchmark metrics
+    manager.run_dqn_evaluation(workload_count=3, seed=42)
+    assert not manager.get_dqn_evaluation_summary_df().empty
+
+    # 3. Render DQN tab with populated state across all sub-tabs
+    render_dqn_tab(manager)
+
+
+def test_no_duplicate_element_ids_in_components_source():
+    """Regression test ensuring all interactive widgets in components.py have distinct keys."""
+    import re
+    from pathlib import Path
+
+    components_path = Path(__file__).resolve().parent.parent / "src" / "rl_ack" / "dashboard" / "components.py"
+    content = components_path.read_text(encoding="utf-8")
+
+    # Find all explicit keys defined in components.py
+    keys = re.findall(r'key=["\']([^"\']+)["\']', content)
+    duplicate_keys = [k for k in keys if keys.count(k) > 1]
+    assert len(duplicate_keys) == 0, f"Found duplicate widget keys in components.py: {set(duplicate_keys)}"
+

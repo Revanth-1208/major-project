@@ -87,6 +87,7 @@ seed_val = st.sidebar.number_input(
     max_value=999999,
     value=manager.random_seed,
     step=1,
+    key="sidebar_random_seed",
     help="Fixed seed guarantees reproducible stochastic random walks.",
 )
 if seed_val != manager.random_seed:
