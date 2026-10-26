@@ -367,10 +367,18 @@ def render_mqtt_delivery_tab(manager: Any) -> None:
         "from independent subscriber receipts and application delivery confirmations."
     )
 
+    # Automatically attempt initial connection on first visit if broker is listening
+    if "mqtt_auto_attempted" not in st.session_state:
+        st.session_state.mqtt_auto_attempted = True
+        if not manager.mqtt_manager.is_connected:
+            manager.connect_mqtt(timeout_s=0.5)
+
     metrics = manager.get_mqtt_metrics()
     cfg = manager.mqtt_manager.config
     pub_connected = manager.mqtt_manager.publisher.is_connected
     sub_connected = manager.mqtt_manager.subscriber.is_connected
+    sub_subscribed = manager.mqtt_manager.subscriber.is_subscribed
+    is_connected = manager.mqtt_manager.is_connected
 
     # Connection Status Banner & Config Controls
     col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([2, 1, 1])
@@ -393,35 +401,51 @@ def render_mqtt_delivery_tab(manager: Any) -> None:
 
     with col_ctrl3:
         if not (pub_connected and sub_connected):
-            if st.button("🔌 Connect Clients", width="stretch"):
-                ok = manager.connect_mqtt()
+            if st.button("🔌 Connect Clients", width="stretch", help="Initiate MQTT connection for publisher and subscriber"):
+                with st.spinner("Connecting to MQTT broker..."):
+                    ok = manager.connect_mqtt(timeout_s=1.0)
                 if ok:
-                    st.success("Connected to MQTT Broker!")
+                    st.toast("Connected to MQTT Broker!", icon="🟢")
                 else:
-                    st.error("Could not connect. Is Mosquitto running?")
+                    err = manager.mqtt_manager.connection_error or "Connection timed out"
+                    st.toast(f"Connection failed: {err}", icon="⚠️")
                 st.rerun()
         else:
-            if st.button("🛑 Disconnect", width="stretch"):
-                manager.disconnect_mqtt()
-                st.info("Disconnected from MQTT Broker.")
-                st.rerun()
+            col_act1, col_act2 = st.columns(2)
+            with col_act1:
+                if st.button("⚡ Test Publish", width="stretch", help="Publish a diagnostic test alert to verify delivery"):
+                    test_alert = manager.trigger_test_mqtt_alert()
+                    if test_alert:
+                        st.toast(f"Published test alert {test_alert.alert_id}!", icon="📤")
+                    else:
+                        st.toast("Failed to publish test alert", icon="⚠️")
+                    st.rerun()
+            with col_act2:
+                if st.button("🛑 Disconnect", width="stretch", help="Gracefully disconnect MQTT clients"):
+                    manager.disconnect_mqtt()
+                    st.toast("Disconnected from MQTT Broker.", icon="ℹ️")
+                    st.rerun()
 
-    # Client Status Indicators
+    # Client Status Indicators driven by actual MQTT callbacks
     col_s1, col_s2, col_s3 = st.columns(3)
     with col_s1:
-        b_color = "🟢" if (pub_connected and sub_connected) else ("🟡" if (pub_connected or sub_connected) else "🔴")
+        b_color = "🟢" if is_connected else ("🟡" if (pub_connected or sub_connected) else "🔴")
         st.markdown(f"**Broker Link:** {b_color} `{metrics['broker_status']}`")
     with col_s2:
         p_icon = "🟢" if pub_connected else "🔴"
-        st.markdown(f"**Publisher Client:** {p_icon} `{cfg.publisher_client_id}`")
+        p_extra = " *(ACK Listener)*" if manager.mqtt_manager.publisher.is_subscribed else ""
+        st.markdown(f"**Publisher Client:** {p_icon} `{cfg.publisher_client_id}`{p_extra}")
     with col_s3:
         s_icon = "🟢" if sub_connected else "🔴"
-        st.markdown(f"**Subscriber Client:** {s_icon} `{cfg.subscriber_client_id}`")
+        s_extra = " *(Subscribed)*" if sub_subscribed else (" *(Subscribing...)*" if sub_connected else "")
+        st.markdown(f"**Subscriber Client:** {s_icon} `{cfg.subscriber_client_id}`{s_extra}")
 
-    if not pub_connected:
+    if not is_connected:
         st.warning(
-            "⚠️ **Broker Connection Offline:** Messages will not traverse MQTT until the broker is running. "
-            "To launch Mosquitto locally on Windows: open PowerShell and run: `& 'C:\\Program Files\\mosquitto\\mosquitto.exe' -v`"
+            "⚠️ **Broker Connection Offline:** Messages will not traverse MQTT until the broker is running.\n\n"
+            "• Ensure Eclipse Mosquitto is running on `127.0.0.1:1883`.\n"
+            "• To start Mosquitto locally on Windows PowerShell: `& 'C:\\Program Files\\mosquitto\\mosquitto.exe' -v`\n"
+            "• Click **🔌 Connect Clients** above once Mosquitto is running."
         )
 
     st.markdown("---")

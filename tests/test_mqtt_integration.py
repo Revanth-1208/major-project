@@ -516,3 +516,130 @@ def test_live_mosquitto_broker_alert_roundtrip():
         assert rec.end_to_end_latency_ms > 0
     finally:
         manager.disconnect()
+
+
+# -----------------------------------------------------------------------------
+# 17. Focused Connection Lifecycle, Callbacks, and Status Reporting Tests
+# -----------------------------------------------------------------------------
+
+def test_client_id_uniqueness_validation():
+    """Verify identical publisher and subscriber client IDs are rejected."""
+    with pytest.raises(ConfigurationError, match="must be distinct"):
+        MqttConfig(publisher_client_id="same_client_id", subscriber_client_id="same_client_id").validate()
+
+
+def test_publisher_and_subscriber_subscription_callbacks():
+    """Verify on_subscribe callbacks confirm topic subscriptions."""
+    publisher = MqttAlertPublisher()
+    subscriber = MqttAlertSubscriber()
+
+    assert publisher.is_subscribed is False
+    assert subscriber.is_subscribed is False
+
+    # Simulate SUBACK callbacks
+    publisher._on_subscribe(publisher.client, None, mid=1)
+    subscriber._on_subscribe(subscriber.client, None, mid=2)
+
+    assert publisher.is_subscribed is True
+    assert subscriber.is_subscribed is True
+
+    # Disconnect clears subscription status
+    publisher._on_disconnect(publisher.client, None)
+    subscriber._on_disconnect(subscriber.client, None)
+
+    assert publisher.is_subscribed is False
+    assert subscriber.is_subscribed is False
+
+
+def test_connection_failure_handling_and_error_capture():
+    """Verify connection errors are captured and do not raise unhandled exceptions."""
+    cfg = MqttConfig(host="127.0.0.1", port=19999)  # Closed port
+    publisher = MqttAlertPublisher(config=cfg)
+
+    # Patch client.connect to simulate socket failure
+    with patch.object(publisher.client, "connect", side_effect=ConnectionRefusedError("Connection refused")):
+        ok = publisher.connect(timeout_s=0.2)
+        assert ok is False
+        assert publisher.is_connected is False
+        assert publisher.is_connecting is False
+        assert "Connection refused" in (publisher.connection_error or "")
+
+    # Repeated calls should remain safe
+    with patch.object(publisher.client, "connect", side_effect=ConnectionRefusedError("Connection refused")):
+        ok = publisher.connect(timeout_s=0.2)
+        assert ok is False
+
+
+def test_on_connect_fail_callback():
+    """Verify on_connect_fail callback resets connection flags and records error."""
+    publisher = MqttAlertPublisher()
+    publisher._is_connecting = True
+
+    publisher._on_connect_fail(publisher.client, None)
+    assert publisher.is_connected is False
+    assert publisher.is_connecting is False
+    assert publisher.connection_error is not None
+    assert "Broker unreachable" in publisher.connection_error
+
+
+def test_on_connect_rejection_reason_code():
+    """Verify on_connect handles rejection reason codes."""
+    subscriber = MqttAlertSubscriber()
+
+    # Rejection code (e.g. 5 = Not authorized)
+    subscriber._on_connect(subscriber.client, None, None, rc=5)
+    assert subscriber.is_connected is False
+    assert subscriber.is_connecting is False
+    assert "rejected" in (subscriber.connection_error or "").lower()
+
+
+def test_mqtt_manager_connection_status_reporting():
+    """Verify MqttManager reports detailed human-readable status from callbacks."""
+    manager = MqttManager()
+
+    # Initial state
+    assert manager.is_connected is False
+    assert manager.broker_status == "Disconnected"
+
+    # Publisher connected only
+    manager.publisher._is_connected = True
+    assert manager.broker_status == "Publisher Connected (Subscriber Offline)"
+
+    # Subscriber connected only
+    manager.publisher._is_connected = False
+    manager.subscriber._is_connected = True
+    assert manager.broker_status == "Subscriber Connected (Publisher Offline)"
+
+    # Both connected, subscriber still subscribing
+    manager.publisher._is_connected = True
+    manager.subscriber._is_connected = True
+    manager.subscriber._is_subscribed = False
+    assert manager.is_connected is True
+    assert manager.broker_status == "Connected (Subscribing...)"
+
+    # Both connected and subscriber confirmed subscribed
+    manager.subscriber._is_subscribed = True
+    assert manager.broker_status == "Connected (Subscribed)"
+
+    # Disconnected with specific error
+    manager.publisher._is_connected = False
+    manager.subscriber._is_connected = False
+    manager.publisher._connection_error = "Connection refused"
+    assert manager.broker_status == "Disconnected (Connection refused)"
+
+
+def test_dashboard_simulation_manager_mqtt_integration():
+    """Verify DashboardSimulationManager connects to MQTT and triggers test alerts."""
+    from rl_ack.dashboard.state import DashboardSimulationManager
+
+    sim_mgr = DashboardSimulationManager()
+    assert sim_mgr.mqtt_manager is not None
+
+    # Test trigger_test_mqtt_alert when disconnected
+    sim_mgr.mqtt_manager.publisher._is_connected = False
+    alt = sim_mgr.trigger_test_mqtt_alert()
+    assert alt is not None
+    rec = sim_mgr.mqtt_manager.tracker.records.get(alt.alert_id)
+    assert rec is not None
+    assert rec.status == DeliveryStatus.FAILED
+

@@ -2,10 +2,11 @@
 
 from collections import deque
 from typing import Any, Dict, List, Optional
+import uuid
 import pandas as pd
 
-from rl_ack.common.enums import NodeOperationalStatus, SensorType
-from rl_ack.common.models import SensorReading
+from rl_ack.common.enums import AlertSeverity, NodeOperationalStatus, SensorType, TrafficClass
+from rl_ack.common.models import AlertMessage, SensorReading
 from rl_ack.monitoring.detector import IncidentDetector
 from rl_ack.monitoring.manager import IncidentManager
 from rl_ack.mqtt.manager import MqttManager
@@ -322,13 +323,30 @@ class DashboardSimulationManager:
         """Return pandas DataFrame of MQTT delivery verification records."""
         return self.mqtt_manager.get_delivery_df()
 
-    def connect_mqtt(self) -> bool:
+    def connect_mqtt(self, timeout_s: Optional[float] = None) -> bool:
         """Attempt to connect MQTT publisher and subscriber to broker."""
-        return self.mqtt_manager.connect()
+        return self.mqtt_manager.connect(timeout_s=timeout_s)
 
     def disconnect_mqtt(self) -> None:
         """Disconnect MQTT clients from broker."""
         self.mqtt_manager.disconnect()
+
+    def trigger_test_mqtt_alert(self) -> Optional[AlertMessage]:
+        """Publish a diagnostic test alert over MQTT to verify delivery verification pipeline."""
+        test_alert = AlertMessage(
+            alert_id=f"ALT-TEST-{uuid.uuid4().hex[:6].upper()}",
+            sensor_id="GAS-001",
+            severity=AlertSeverity.WARNING,
+            reading_value=120.0,
+            threshold_value=100.0,
+            unit="ppm",
+            incident_type="gas_leak",
+            message="Manual MQTT Diagnostic Delivery Verification Test",
+            simulation_time_s=self.engine.current_simulation_time,
+            priority=TrafficClass.CRITICAL_CONTROL,
+        )
+        self.mqtt_manager.publish_alert(test_alert, qos=self.mqtt_qos)
+        return test_alert
 
     def set_mqtt_qos(self, qos: int) -> None:
         """Update active MQTT alert publication QoS level."""

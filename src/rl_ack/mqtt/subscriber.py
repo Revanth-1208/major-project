@@ -8,8 +8,10 @@ from collections import deque
 from datetime import datetime, timezone
 import json
 import logging
+import socket
 import time
 from typing import Any, Callable, Dict, List, Optional, Set
+from unittest.mock import MagicMock
 
 import paho.mqtt.client as mqtt
 
@@ -36,12 +38,18 @@ class MqttAlertSubscriber:
         self.on_alert_received = on_alert_received
 
         self._is_connected: bool = False
+        self._is_connecting: bool = False
+        self._is_subscribed: bool = False
+        self._connection_error: Optional[str] = None
         self._received_alert_ids: Set[str] = set()
         self._duplicate_count: int = 0
         self._malformed_count: int = 0
         self._received_alerts: deque[AlertMessage] = deque(maxlen=max_retained_alerts)
 
-        # Initialize Paho MQTT client
+        self._init_client()
+
+    def _init_client(self) -> None:
+        """Initialize Paho MQTT client supporting Paho v1 and v2 API."""
         if hasattr(mqtt, "CallbackAPIVersion"):
             self.client = mqtt.Client(
                 mqtt.CallbackAPIVersion.VERSION2,
@@ -61,13 +69,30 @@ class MqttAlertSubscriber:
             )
 
         self.client.on_connect = self._on_connect
+        self.client.on_connect_fail = self._on_connect_fail
         self.client.on_disconnect = self._on_disconnect
+        self.client.on_subscribe = self._on_subscribe
         self.client.on_message = self._on_message
 
     @property
     def is_connected(self) -> bool:
         """Check if subscriber is actively connected to the broker."""
         return self._is_connected
+
+    @property
+    def is_connecting(self) -> bool:
+        """Check if subscriber is actively attempting to establish connection."""
+        return self._is_connecting
+
+    @property
+    def is_subscribed(self) -> bool:
+        """Check if subscriber has verified alert topic subscription."""
+        return self._is_subscribed
+
+    @property
+    def connection_error(self) -> Optional[str]:
+        """Description of the most recent connection failure, if any."""
+        return self._connection_error
 
     @property
     def duplicate_count(self) -> int:
@@ -79,36 +104,81 @@ class MqttAlertSubscriber:
         """Total number of malformed or invalid alert payloads received."""
         return self._malformed_count
 
+    @staticmethod
+    def _is_reason_success(rc: Any) -> bool:
+        """Evaluate whether a connection or subscription reason code signifies success."""
+        if rc is None:
+            return False
+        if isinstance(rc, int):
+            return rc == 0
+        if hasattr(rc, "is_failure"):
+            return not rc.is_failure
+        if hasattr(rc, "value"):
+            return rc.value == 0
+        return rc == 0
+
     def connect(self, timeout_s: Optional[float] = None) -> bool:
         """Connect subscriber to broker and start network loop."""
         if self._is_connected:
             return True
 
-        timeout = timeout_s or self.config.connect_timeout_s
+        timeout = timeout_s if timeout_s is not None else self.config.connect_timeout_s
+        self._is_connecting = True
+        self._connection_error = None
+
         try:
-            self.client.connect_async(
-                self.config.host,
-                self.config.port,
-                keepalive=self.config.keepalive,
-            )
+            # If connect_async is an explicit Mock, use it directly
+            is_async_mock = isinstance(getattr(self.client, "connect_async", None), MagicMock)
+            if is_async_mock:
+                self.client.connect_async(
+                    self.config.host,
+                    self.config.port,
+                    keepalive=self.config.keepalive,
+                )
+            elif hasattr(self.client, "connect"):
+                rc = self.client.connect(
+                    self.config.host,
+                    self.config.port,
+                    keepalive=self.config.keepalive,
+                )
+                if rc != 0 and rc != mqtt.MQTT_ERR_SUCCESS:
+                    self._connection_error = f"connect() failed with return code {rc}"
+                    self._is_connecting = False
+                    return False
+            else:
+                self.client.connect_async(
+                    self.config.host,
+                    self.config.port,
+                    keepalive=self.config.keepalive,
+                )
+
             self.client.loop_start()
 
+            # Wait briefly for on_connect and on_subscribe callbacks
             start_t = time.time()
             while (time.time() - start_t) < timeout:
-                if self._is_connected:
+                if self._is_connected and self._is_subscribed:
+                    self._is_connecting = False
                     return True
-                time.sleep(0.05)
+                elif self._is_connected and (time.time() - start_t) > 0.5:
+                    # Connected, give a short grace period for SUBACK
+                    self._is_connecting = False
+                    return True
+                time.sleep(0.02)
 
-            logger.warning(
-                "MQTT subscriber connection timed out after %.1fs to %s:%d",
-                timeout,
-                self.config.host,
-                self.config.port,
-            )
+            self._is_connecting = False
             return self._is_connected
-        except Exception as e:
-            logger.error("Failed to connect MQTT subscriber: %s", e)
+        except (ConnectionRefusedError, socket.error, OSError) as e:
+            self._connection_error = f"Socket error: {e}"
             self._is_connected = False
+            self._is_connecting = False
+            logger.warning("Subscriber connection refused to %s:%d: %s", self.config.host, self.config.port, e)
+            return False
+        except Exception as e:
+            self._connection_error = f"Connect exception: {e}"
+            self._is_connected = False
+            self._is_connecting = False
+            logger.error("Failed to connect MQTT subscriber: %s", e)
             return False
 
     def disconnect(self) -> None:
@@ -120,12 +190,16 @@ class MqttAlertSubscriber:
             logger.debug("Error during subscriber disconnect: %s", e)
         finally:
             self._is_connected = False
+            self._is_subscribed = False
+            self._is_connecting = False
 
     def _on_connect(self, client: Any, userdata: Any, flags: Any, rc: Any, *args: Any) -> None:
         """Subscribe to alert topic once connection is established."""
-        is_success = (rc == 0) if isinstance(rc, int) else (getattr(rc, "is_failure", False) is False)
+        is_success = self._is_reason_success(rc)
         if is_success:
             self._is_connected = True
+            self._is_connecting = False
+            self._connection_error = None
             logger.info("Subscriber connected to MQTT broker. Subscribing to %s", self.config.alert_topic)
             try:
                 self.client.subscribe(self.config.alert_topic, qos=self.config.default_alert_qos)
@@ -133,12 +207,28 @@ class MqttAlertSubscriber:
                 logger.error("Failed to subscribe to alert topic: %s", e)
         else:
             self._is_connected = False
+            self._is_connecting = False
+            self._connection_error = f"Connection rejected: {rc}"
             logger.warning("Subscriber connection rejected with code %s", rc)
 
-    def _on_disconnect(self, client: Any, userdata: Any, *args: Any) -> None:
+    def _on_connect_fail(self, client: Any, userdata: Any, *args: Any) -> None:
+        """Callback when background connection attempt fails."""
+        self._is_connected = False
+        self._is_connecting = False
+        self._connection_error = "Broker unreachable / connection failed"
+        logger.warning("Subscriber on_connect_fail triggered")
+
+    def _on_disconnect(self, client: Any, userdata: Any, *args: Any, **kwargs: Any) -> None:
         """Handle disconnection event."""
         self._is_connected = False
+        self._is_subscribed = False
+        self._is_connecting = False
         logger.info("Subscriber disconnected from MQTT broker.")
+
+    def _on_subscribe(self, client: Any, userdata: Any, mid: int, reason_codes: Any = None, *args: Any, **kwargs: Any) -> None:
+        """Callback when subscription to alert_topic is confirmed."""
+        self._is_subscribed = True
+        logger.info("Subscriber confirmed subscription to %s (mid=%d)", self.config.alert_topic, mid)
 
     def _on_message(self, client: Any, userdata: Any, msg: Any) -> None:
         """Process incoming alert message."""

@@ -34,19 +34,39 @@ class MqttManager(IMqttManager):
         return self.publisher.is_connected and self.subscriber.is_connected
 
     @property
+    def is_subscribed(self) -> bool:
+        """True if subscriber has confirmed alert topic subscription."""
+        return self.subscriber.is_subscribed
+
+    @property
+    def is_connecting(self) -> bool:
+        """True if either client is actively attempting connection."""
+        return self.publisher.is_connecting or self.subscriber.is_connecting
+
+    @property
+    def connection_error(self) -> Optional[str]:
+        """Most recent connection failure reason reported by publisher or subscriber."""
+        return self.publisher.connection_error or self.subscriber.connection_error
+
+    @property
     def broker_status(self) -> str:
         """Human-readable connection status string."""
         if self.is_connected:
-            return "Connected"
+            sub_status = "Subscribed" if self.subscriber.is_subscribed else "Subscribing..."
+            return f"Connected ({sub_status})"
+        elif self.is_connecting:
+            return "Connecting..."
         elif self.publisher.is_connected:
             return "Publisher Connected (Subscriber Offline)"
         elif self.subscriber.is_connected:
             return "Subscriber Connected (Publisher Offline)"
+        elif self.connection_error:
+            return f"Disconnected ({self.connection_error})"
         return "Disconnected"
 
     def connect(self, timeout_s: Optional[float] = None) -> bool:
         """Connect both publisher and subscriber components to the MQTT broker."""
-        timeout = timeout_s or self.config.connect_timeout_s
+        timeout = timeout_s if timeout_s is not None else self.config.connect_timeout_s
         pub_ok = self.publisher.connect(timeout_s=timeout)
         sub_ok = self.subscriber.connect(timeout_s=timeout)
         return pub_ok and sub_ok
@@ -91,6 +111,9 @@ class MqttManager(IMqttManager):
         metrics["broker_status"] = self.broker_status
         metrics["duplicate_receipts"] = self.subscriber.duplicate_count
         metrics["malformed_receipts"] = self.subscriber.malformed_count
+        metrics["subscriber_subscribed"] = self.subscriber.is_subscribed
+        metrics["publisher_subscribed"] = self.publisher.is_subscribed
+        metrics["connection_error"] = self.connection_error
         return metrics
 
     def get_delivery_records(self) -> List[DeliveryRecord]:

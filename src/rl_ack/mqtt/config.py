@@ -83,3 +83,8 @@ class MqttConfig:
             raise ConfigurationError(
                 "alert_topic and ack_topic must be distinct to prevent message loopback."
             )
+
+        if self.publisher_client_id and self.publisher_client_id == self.subscriber_client_id:
+            raise ConfigurationError(
+                "publisher_client_id and subscriber_client_id must be distinct to prevent broker client ID collisions."
+            )
