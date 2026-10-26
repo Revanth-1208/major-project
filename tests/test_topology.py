@@ -140,3 +140,19 @@ def test_to_plotly_figure_generation():
     assert len(fig.data) >= 3  # edges + implemented nodes + planned nodes
     assert fig.layout.title.text is not None
     assert "Smart Kitchen IoT Network Topology" in fig.layout.title.text
+
+    # Trace names
+    trace_names = [t.name for t in fig.data if t.name is not None]
+    assert "Implemented (Phase 1 & 2)" in trace_names
+    assert "Planned (Subsequent Phases)" in trace_names
+
+
+def test_topology_node_lookup_by_id():
+    """Verify get_node properly retrieves node and raises KeyError for invalid id."""
+    topo = create_smart_kitchen_topology()
+    node = topo.get_node("EDGE-GW-01")
+    assert node.name.startswith("Kitchen IoT Edge Gateway")
+    assert node.node_type == NodeType.EDGE_GATEWAY
+
+    with pytest.raises(KeyError):
+        topo.get_node("NONEXISTENT_NODE")

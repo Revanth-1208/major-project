@@ -69,6 +69,21 @@ class DashboardSimulationManager:
         self._configure_scenario(scenario_name)
         self.reset()
 
+    def pause(self) -> None:
+        """Mark simulation as paused (idle between steps)."""
+        if self.engine.current_simulation_time > 0:
+            self.simulation_status = "Paused"
+        else:
+            self.simulation_status = "Stopped"
+
+    def resume(self) -> None:
+        """Mark simulation as actively running."""
+        self.simulation_status = "Running"
+
+    def stop(self) -> None:
+        """Stop simulation."""
+        self.simulation_status = "Stopped"
+
     def reset(self) -> None:
         """Clear telemetry history and reset sensor engine to baseline t=0."""
         self.engine.reset()
@@ -85,6 +100,10 @@ class DashboardSimulationManager:
     def readings_history(self) -> List[SensorReading]:
         """Chronological list of all retained readings up to max_history."""
         return list(self._history)
+
+    def get_sensor_configs(self) -> Dict[str, Any]:
+        """Map of sensor_id to SensorConfig instances directly from the engine."""
+        return {s.sensor_id: getattr(s, "config", None) for s in self.engine.get_sensors()}
 
     def step(self, dt: Optional[float] = None) -> List[SensorReading]:
         """Advance simulation by dt seconds (default step_size) and process due events."""
@@ -108,7 +127,8 @@ class DashboardSimulationManager:
         for r in new_readings:
             self._history.append(r)
 
-        self.simulation_status = "Running"
+        if self.simulation_status != "Running":
+            self.simulation_status = "Paused"
         return new_readings
 
     def run_steps(self, count: int, dt: Optional[float] = None) -> List[SensorReading]:
@@ -116,6 +136,8 @@ class DashboardSimulationManager:
         all_new: List[SensorReading] = []
         for _ in range(count):
             all_new.extend(self.step(dt))
+        if self.simulation_status != "Running":
+            self.simulation_status = "Paused"
         return all_new
 
     def get_kpis(self) -> Dict[str, Any]:

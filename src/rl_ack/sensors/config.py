@@ -276,7 +276,7 @@ def get_default_humidity_config(
         critical_low=critical_low,
         hysteresis=hysteresis,
         noise_std=0.5,
-        mean_reversion_k=0.08,
+        mean_reversion_k=0.20,
         random_seed=random_seed,
         precision_digits=2,
     )

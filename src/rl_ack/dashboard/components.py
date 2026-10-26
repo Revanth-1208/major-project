@@ -122,15 +122,29 @@ def render_sensor_cards(engine_sensors: List[Any], latest_readings: Dict[str, An
             )
 
 
-def render_preview_charts(time_series_df: pd.DataFrame) -> None:
-    """Render multi-panel time-series plots showing real sensor data against simulation time."""
+def render_preview_charts(
+    time_series_df: pd.DataFrame,
+    sensor_configs: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Render multi-panel time-series plots showing real sensor data against simulation time.
+    
+    Warning and critical threshold reference lines are dynamically derived from configured sensor parameters.
+    """
     if time_series_df.empty:
         st.info("ℹ️ Telemetry charts will populate as the simulation clock advances.")
         return
 
+    configs = sensor_configs or {}
+    gas_cfg = configs.get("GAS-001")
+    temp_cfg = configs.get("TEMP-001")
+    hum_cfg = configs.get("HUM-001")
+    smoke_cfg = configs.get("SMOKE-001")
+
     col1, col2 = st.columns(2)
 
     # 1. Gas concentration (ppm)
+    gas_warn = getattr(gas_cfg, "warning_threshold", 100.0) if gas_cfg else 100.0
+    gas_crit = getattr(gas_cfg, "critical_threshold", 400.0) if gas_cfg else 400.0
     gas_df = time_series_df[time_series_df["sensor_id"] == "GAS-001"]
     with col1:
         fig_gas = px.line(
@@ -142,12 +156,14 @@ def render_preview_charts(time_series_df: pd.DataFrame) -> None:
             labels={"simulation_time_s": "Simulation Time (s)", "value": "ppm"},
             color_discrete_sequence=["#EF4444"],
         )
-        fig_gas.add_hline(y=100.0, line_dash="dash", line_color="#F59E0B", annotation_text="Warning (100 ppm)")
-        fig_gas.add_hline(y=400.0, line_dash="dash", line_color="#DC2626", annotation_text="Critical (400 ppm)")
+        fig_gas.add_hline(y=gas_warn, line_dash="dash", line_color="#F59E0B", annotation_text=f"Warning ({gas_warn:.0f} ppm)")
+        fig_gas.add_hline(y=gas_crit, line_dash="dash", line_color="#DC2626", annotation_text=f"Critical ({gas_crit:.0f} ppm)")
         fig_gas.update_layout(height=280, margin=dict(l=20, r=20, t=40, b=20))
-        st.plotly_chart(fig_gas, use_container_width=True)
+        st.plotly_chart(fig_gas, width="stretch")
 
     # 2. Temperature (°C)
+    temp_warn = getattr(temp_cfg, "warning_threshold", 38.0) if temp_cfg else 38.0
+    temp_crit = getattr(temp_cfg, "critical_threshold", 55.0) if temp_cfg else 55.0
     temp_df = time_series_df[time_series_df["sensor_id"] == "TEMP-001"]
     with col2:
         fig_temp = px.line(
@@ -159,14 +175,18 @@ def render_preview_charts(time_series_df: pd.DataFrame) -> None:
             labels={"simulation_time_s": "Simulation Time (s)", "value": "°C"},
             color_discrete_sequence=["#F97316"],
         )
-        fig_temp.add_hline(y=38.0, line_dash="dash", line_color="#F59E0B", annotation_text="Warning (38 °C)")
-        fig_temp.add_hline(y=55.0, line_dash="dash", line_color="#DC2626", annotation_text="Critical (55 °C)")
+        fig_temp.add_hline(y=temp_warn, line_dash="dash", line_color="#F59E0B", annotation_text=f"Warning ({temp_warn:.0f} °C)")
+        fig_temp.add_hline(y=temp_crit, line_dash="dash", line_color="#DC2626", annotation_text=f"Critical ({temp_crit:.0f} °C)")
         fig_temp.update_layout(height=280, margin=dict(l=20, r=20, t=40, b=20))
-        st.plotly_chart(fig_temp, use_container_width=True)
+        st.plotly_chart(fig_temp, width="stretch")
 
     col3, col4 = st.columns(2)
 
     # 3. Relative Humidity (% RH) - Note 2.0s interval
+    hum_warn_low = getattr(hum_cfg, "warning_low", 30.0) if hum_cfg else 30.0
+    hum_warn_high = getattr(hum_cfg, "warning_threshold", 70.0) if hum_cfg else 70.0
+    hum_crit_low = getattr(hum_cfg, "critical_low", 15.0) if hum_cfg else 15.0
+    hum_crit_high = getattr(hum_cfg, "critical_threshold", 85.0) if hum_cfg else 85.0
     hum_df = time_series_df[time_series_df["sensor_id"] == "HUM-001"]
     with col3:
         fig_hum = px.line(
@@ -178,11 +198,22 @@ def render_preview_charts(time_series_df: pd.DataFrame) -> None:
             labels={"simulation_time_s": "Simulation Time (s)", "value": "% RH"},
             color_discrete_sequence=["#06B6D4"],
         )
-        fig_hum.add_hrect(y0=30.0, y1=70.0, line_width=0, fillcolor="#10B981", opacity=0.1, annotation_text="Normal Range")
+        fig_hum.add_hrect(
+            y0=hum_warn_low,
+            y1=hum_warn_high,
+            line_width=0,
+            fillcolor="#10B981",
+            opacity=0.1,
+            annotation_text=f"Normal ({hum_warn_low:.0f}-{hum_warn_high:.0f}%)",
+        )
+        fig_hum.add_hline(y=hum_crit_low, line_dash="dash", line_color="#DC2626", annotation_text=f"Crit Low ({hum_crit_low:.0f}%)")
+        fig_hum.add_hline(y=hum_crit_high, line_dash="dash", line_color="#DC2626", annotation_text=f"Crit High ({hum_crit_high:.0f}%)")
         fig_hum.update_layout(height=280, margin=dict(l=20, r=20, t=40, b=20))
-        st.plotly_chart(fig_hum, use_container_width=True)
+        st.plotly_chart(fig_hum, width="stretch")
 
     # 4. Smoke Obscuration (% obs/m)
+    smoke_warn = getattr(smoke_cfg, "warning_threshold", 1.0) if smoke_cfg else 1.0
+    smoke_crit = getattr(smoke_cfg, "critical_threshold", 3.5) if smoke_cfg else 3.5
     smoke_df = time_series_df[time_series_df["sensor_id"] == "SMOKE-001"]
     with col4:
         fig_smoke = px.line(
@@ -194,10 +225,10 @@ def render_preview_charts(time_series_df: pd.DataFrame) -> None:
             labels={"simulation_time_s": "Simulation Time (s)", "value": "% obs/m"},
             color_discrete_sequence=["#64748B"],
         )
-        fig_smoke.add_hline(y=1.0, line_dash="dash", line_color="#F59E0B", annotation_text="Warning (1.0)")
-        fig_smoke.add_hline(y=3.5, line_dash="dash", line_color="#DC2626", annotation_text="Critical (3.5)")
+        fig_smoke.add_hline(y=smoke_warn, line_dash="dash", line_color="#F59E0B", annotation_text=f"Warning ({smoke_warn:.1f})")
+        fig_smoke.add_hline(y=smoke_crit, line_dash="dash", line_color="#DC2626", annotation_text=f"Critical ({smoke_crit:.1f})")
         fig_smoke.update_layout(height=280, margin=dict(l=20, r=20, t=40, b=20))
-        st.plotly_chart(fig_smoke, use_container_width=True)
+        st.plotly_chart(fig_smoke, width="stretch")
 
 
 def render_topology_section(topology: KitchenIoTTopology) -> None:
@@ -206,7 +237,7 @@ def render_topology_section(topology: KitchenIoTTopology) -> None:
     st.caption("Visualizing communication paths from virtual sensors to edge gateway and upstream cloud entities.")
 
     fig = topology.to_plotly_figure()
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     col1, col2 = st.columns(2)
 

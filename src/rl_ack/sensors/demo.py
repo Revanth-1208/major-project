@@ -27,9 +27,9 @@ def create_demonstration_engine(seed_offset: int = 0) -> SensorEngine:
     engine = SensorEngine()
 
     gas_cfg = get_default_gas_config(
-        warning_threshold=120.0,
-        critical_threshold=350.0,
-        hysteresis=10.0,
+        warning_threshold=100.0,
+        critical_threshold=400.0,
+        hysteresis=5.0,
         random_seed=42 + seed_offset,
     )
     gas_cfg.mean_reversion_k = 0.25
@@ -64,7 +64,7 @@ def run_sensor_demo(total_seconds: float = 16.0, step_size: float = 1.0) -> None
     print("   RL-ACK: SENSOR SCENARIOS & DYNAMIC STATUS CLASSIFICATION DEMONSTRATION")
     print("=" * 86)
     print("Engine Configuration (Fixed Reproducible Seeds 42..45):")
-    print("  - GAS-001   (gas, ppm)        | Warning: >=120 | Critical: >=350 | Hysteresis: 10 | Interval: 1.0s")
+    print("  - GAS-001   (gas, ppm)        | Warning: >=100 | Critical: >=400 | Hysteresis:  5 | Interval: 1.0s")
     print("  - TEMP-001  (temp, °C)        | Warning: >= 38 | Critical: >= 55 | Hysteresis:  2 | Interval: 1.0s")
     print("  - HUM-001   (humidity, % RH)  | Limits: [30, 70] warn, [15, 85] crit              | Interval: 2.0s")
     print("  - SMOKE-001 (smoke, % obs/m)  | Warning: >=1.0 | Critical: >=3.5 | Hysteresis: 0.1| Interval: 1.0s")
@@ -82,10 +82,10 @@ def run_sensor_demo(total_seconds: float = 16.0, step_size: float = 1.0) -> None
     status_counts: dict[str, int] = {"normal": 0, "warning": 0, "critical": 0}
 
     while current_time < total_seconds:
-        # At t = 3.0s, inject simulated gas accumulation (Target: 500 ppm, Duration: 5.0s, expires at t=8s)
+        # At t = 3.0s, inject simulated gas accumulation (Target: 650 ppm, Duration: 5.0s, expires at t=8s)
         if abs(current_time - 3.0) < 1e-6:
-            print(">>> [SCENARIO EVENT] Gas Leak Initiated on GAS-001 (Target: 500 ppm, Duration: 5s)")
-            engine.trigger_sensor_event("GAS-001", target_value=500.0, duration_s=5.0)
+            print(">>> [SCENARIO EVENT] Gas Leak Initiated on GAS-001 (Target: 650 ppm, Duration: 5s)")
+            engine.trigger_sensor_event("GAS-001", target_value=650.0, duration_s=5.0)
 
         # At t = 8.0s, event duration expires; gas returns toward baseline via mean reversion
         if abs(current_time - 8.0) < 1e-6:

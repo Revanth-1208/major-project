@@ -56,8 +56,8 @@ def scenario_normal_operation(duration_s: float = 15.0, seed: int = 42) -> Senso
 
 def scenario_gradual_gas_leak(
     start_time_s: float = 3.0,
-    duration_s: float = 6.0,
-    target_ppm: float = 550.0,
+    duration_s: float = 7.0,
+    target_ppm: float = 850.0,
     total_duration_s: float = 18.0,
     seed: int = 42,
 ) -> SensorScenario:
@@ -81,8 +81,8 @@ def scenario_gradual_gas_leak(
 
 def scenario_abnormal_temperature_rise(
     start_time_s: float = 3.0,
-    duration_s: float = 6.0,
-    target_temp_c: float = 75.0,
+    duration_s: float = 7.0,
+    target_temp_c: float = 95.0,
     total_duration_s: float = 18.0,
     seed: int = 43,
 ) -> SensorScenario:
@@ -107,7 +107,7 @@ def scenario_abnormal_temperature_rise(
 def scenario_increasing_smoke(
     start_time_s: float = 3.0,
     duration_s: float = 6.0,
-    target_obs: float = 6.0,
+    target_obs: float = 7.5,
     total_duration_s: float = 18.0,
     seed: int = 45,
 ) -> SensorScenario:
@@ -131,13 +131,13 @@ def scenario_increasing_smoke(
 
 def scenario_humidity_change(
     mode: str = "high",
-    start_time_s: float = 3.0,
-    duration_s: float = 6.0,
-    total_duration_s: float = 18.0,
+    start_time_s: float = 2.0,
+    duration_s: float = 16.0,
+    total_duration_s: float = 26.0,
     seed: int = 44,
 ) -> SensorScenario:
     """Scenario 5: Relative humidity excursion (two-sided: either high condensation or severe dryness)."""
-    target = 92.0 if mode == "high" else 8.0
+    target = 99.0 if mode == "high" else 1.0
     desc = "High steam condensation event" if mode == "high" else "Severe HVAC dryness event"
     return SensorScenario(
         name=f"Humidity Anomaly ({mode.capitalize()})",

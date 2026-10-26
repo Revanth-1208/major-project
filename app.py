@@ -6,6 +6,7 @@ configurable environmental scenarios, and interactive IoT network topology.
 """
 
 import sys
+import time
 from pathlib import Path
 
 # Ensure src/ is on sys.path
@@ -102,15 +103,26 @@ manager.step_size = step_size_val
 st.sidebar.markdown("---")
 st.sidebar.subheader("🕹️ Execution Commands")
 
+# Continuous Auto-Run toggle
+is_auto_running = st.sidebar.toggle(
+    "▶️ Continuous Auto-Run",
+    value=st.session_state.get("auto_running", False),
+    help="Continuously advance the simulation clock in real time.",
+)
+st.session_state.auto_running = is_auto_running
+
 # Single Step button
 col_btn1, col_btn2 = st.sidebar.columns(2)
 with col_btn1:
-    if st.button("▶️ Step (1s)", use_container_width=True, help="Advance simulation by 1 step"):
+    if st.button("▶️ Step (1s)", width="stretch", help="Advance simulation by 1 step"):
+        st.session_state.auto_running = False
         manager.step()
+        manager.pause()
         st.rerun()
 
 with col_btn2:
-    if st.button("🔄 Reset", use_container_width=True, help="Reset simulation clock to t=0"):
+    if st.button("🔄 Reset", width="stretch", help="Reset simulation clock to t=0"):
+        st.session_state.auto_running = False
         manager.reset()
         st.rerun()
 
@@ -122,8 +134,10 @@ batch_count = st.sidebar.selectbox(
     help="Execute consecutive steps in a single update.",
 )
 
-if st.sidebar.button(f"⏩ Run {batch_count} Steps ({batch_count * step_size_val:.1f}s)", use_container_width=True):
+if st.sidebar.button(f"⏩ Run {batch_count} Steps ({batch_count * step_size_val:.1f}s)", width="stretch"):
+    st.session_state.auto_running = False
     manager.run_steps(batch_count)
+    manager.pause()
     st.rerun()
 
 st.sidebar.markdown("---")
@@ -132,7 +146,7 @@ st.sidebar.markdown(
     <div style="font-size: 12px; color: #64748B;">
         <b>Demo Guide for Faculty:</b><br/>
         1. Select <i>Kitchen Fire Multi-Event Emergency</i> or <i>Gradual Gas Leak</i>.<br/>
-        2. Click <b>Step</b> or <b>Run 10 Steps</b>.<br/>
+        2. Click <b>Step</b>, <b>Run 10 Steps</b>, or enable <b>Continuous Auto-Run</b>.<br/>
         3. Observe live transitions: <b>NORMAL &rarr; WARNING &rarr; CRITICAL &rarr; RECOVERY</b>.<br/>
         4. Check the <b>Topology</b> tab for the network architecture.
     </div>
@@ -177,14 +191,14 @@ with tab_telemetry:
 
     inventory_rows = manager.get_sensor_inventory()
     df_inventory = pd.DataFrame(inventory_rows)
-    st.dataframe(df_inventory, use_container_width=True, hide_index=True)
+    st.dataframe(df_inventory, width="stretch", hide_index=True)
 
     st.markdown("---")
     st.subheader("📈 Real Telemetry Preview Charts")
     st.caption("Plots real sensor data points generated at their scheduled boundaries against monotonic simulation time.")
 
     time_series_df = manager.get_time_series_df()
-    render_preview_charts(time_series_df)
+    render_preview_charts(time_series_df, sensor_configs=manager.get_sensor_configs())
 
 # ------------------------------------------------------------------------------
 # Tab 2: IoT Network Topology
@@ -224,7 +238,7 @@ with tab_stream:
         st.subheader("📜 Recent Telemetry Stream (Bounded Buffer)")
         st.caption(f"Showing up to the last 50 samples emitted by the engine (Buffer Capacity: {manager.max_history} samples).")
         recent_df = manager.get_recent_readings_df(limit=50)
-        st.dataframe(recent_df, use_container_width=True, hide_index=True, height=350)
+        st.dataframe(recent_df, width="stretch", hide_index=True, height=350)
 
 # ------------------------------------------------------------------------------
 # Tab 4: System Architecture & Roadmaps
@@ -260,3 +274,12 @@ with tab_arch:
         for mod_id, name, phase_str, is_done in modules_status:
             icon = "🟢" if is_done else "⚪"
             st.markdown(f"- {icon} **{mod_id}: {name}** — *{phase_str}*")
+
+# ------------------------------------------------------------------------------
+# Continuous Auto-Run Execution Loop
+# ------------------------------------------------------------------------------
+if is_auto_running:
+    manager.resume()
+    manager.step()
+    time.sleep(0.3)
+    st.rerun()
