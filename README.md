@@ -40,7 +40,7 @@ The system is partitioned into twelve distinct modules:
 3. **Module 3: System Overview and IoT Topology** (`rl_ack/topology/`, `rl_ack/dashboard/`, `app.py`) — *Implemented (Phase 2)*
 4. **Module 4: Sensor Monitoring and Incident Detection** (`rl_ack/monitoring/`) — *Implemented (Phase 3)*
 5. **Module 5: MQTT Alert Transmission and Delivery Verification** (`rl_ack/mqtt/`) — *Implemented (Phase 4)*
-6. **Module 6: Six-Policy Comparative Analysis** (`rl_ack/policies/`) — *Subsequent Phase*
+6. **Module 6: Fixed ACK Policy Engine & Comparative Evaluation** (`rl_ack/policies/`) — *Implemented (Phase 5)*
 7. **Module 7: DQN Architecture and Training** (`rl_ack/dqn/`) — *Subsequent Phase*
 8. **Module 8: DQN Controller Integration** (`rl_ack/controller/`) — *Subsequent Phase*
 9. **Module 9: Interactive Simulation Runner** (`rl_ack/simulation/`) — *Subsequent Phase*
@@ -442,7 +442,16 @@ d:\Maj_2
 │       │   ├── subscriber.py      # Independent receiver & application ACK generator
 │       │   ├── manager.py         # MqttManager orchestrator (IMqttManager contract)
 │       │   └── receiver.py        # Standalone CLI alert receiver
-│       ├── policies/          # Module 6: Six ACK Policies (Planned Phase 5)
+│       ├── policies/          # Module 6: Five Fixed ACK Policies (Implemented Phase 5)
+│       │   ├── base.py            # BaseAckPolicy contract & PolicyEvaluationResult
+│       │   ├── static_qos0.py     # Policy A: Static MQTT QoS 0 (Fire-and-forget)
+│       │   ├── static_local_ack.py # Policy B: Static Local ACK (Edge proxy ACK)
+│       │   ├── static_qos1.py     # Policy C: Static MQTT QoS 1 + Retries
+│       │   ├── local_ack_retry.py # Policy D: Local ACK + Selective Retransmit (CC priority)
+│       │   ├── static_qos2.py     # Policy E: Static MQTT QoS 2 (4-way handshake)
+│       │   ├── network_model.py   # SimulatedNetworkModel (Deterministic channel loss/jitter)
+│       │   ├── workload.py        # WorkloadGenerator (CC, HBS, BET traffic synthesis)
+│       │   └── runner.py          # PolicyExperimentRunner (Metrics & CSV export)
 │       ├── dqn/               # Module 7: Neural Network & Replay Buffer (Planned Phase 6/7)
 │       ├── controller/        # Module 8: DQN Online Controller (Planned Phase 7/8)
 │       ├── simulation/        # Module 9: Simulation Engine (Planned Phase 8/9)
@@ -450,13 +459,14 @@ d:\Maj_2
 │       └── analysis/          # Module 11: Export & Visualization (Planned Phase 10/11)
 └── tests/
     ├── __init__.py
+    ├── test_ack_policies.py              # Phase 5 ACK Policy Engine tests (12 tests)
     ├── test_app_entrypoint.py
     ├── test_cli.py
     ├── test_config.py
     ├── test_dashboard_state.py           # Phase 2 Dashboard state tests
     ├── test_incident_monitoring.py       # Phase 3 Incident & Alert Management tests (18 tests)
     ├── test_module_boundaries.py         # Boundary validation for Modules 1-12
-    ├── test_mqtt_integration.py          # Phase 4 MQTT Transmission & Verification tests (17 tests)
+    ├── test_mqtt_integration.py          # Phase 4 MQTT Transmission & Verification tests (24 tests)
     ├── test_sensor_scenarios_and_status.py # Scenario & hysteresis tests
     ├── test_topology.py                  # Phase 2 IoT Topology unit tests
     ├── test_types_and_contracts.py       # Domain contracts and serialization tests
@@ -465,57 +475,75 @@ d:\Maj_2
 
 ---
 
+## Phase 5: Fixed ACK Policy Engine & Comparative Evaluation
+
+Phase 5 establishes an empirical baseline by implementing and evaluating five fixed acknowledgment strategies under identical traffic workloads and channel conditions before introducing reinforcement learning in Phase 6.
+
+### The Five Fixed ACK Policies
+
+| Policy | Underlying Action | Protocol QoS | Acknowledgment Mechanism | Retransmission Strategy | Overhead Profile |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| **Policy A** (`StaticQos0Policy`) | `MQTT_QOS_0` | QoS 0 | None (Fire-and-forget) | None (Single attempt) | Lowest (~28B + payload) |
+| **Policy B** (`StaticLocalAckPolicy`) | `LOCAL_ACK` | QoS 0 | Proximate edge proxy ACK | None | Low (Local ACK +20B) |
+| **Policy C** (`StaticQos1RetryPolicy`) | `MQTT_QOS_1` | QoS 1 | Broker PUBACK + App Receipt | Bounded retries up to $N$ | Moderate-High (Retries on loss) |
+| **Policy D** (`LocalAckSelectiveRetryPolicy`) | `LOCAL_ACK_SELECTIVE_RETRANSMIT` | QoS 0/1 | Immediate local proxy ACK | Selective (CC alerts only) | Balanced (Energy/bandwidth efficient) |
+| **Policy E** (`StaticQos2Policy`) | `MQTT_QOS_2` | QoS 2 | 4-way protocol handshake | Handshake protocol retries | Highest (+40B protocol exchange) |
+
+### Important Semantic Distinctions
+1. **Local Proxy ACK $\neq$ End-to-End Delivery**: Policy B and D record local proxy acknowledgments when the proximate edge router receives the transmission. A local ACK decouples the transmitter wait-time, but does NOT count as confirmed delivery unless the downstream subscriber actually receives the message.
+2. **Broker PUBACK $\neq$ Application Receipt**: Policy C tracks transport-layer broker PUBACK separately from end-to-end subscriber receipt confirmations.
+3. **QoS 2 Semantics**: MQTT QoS 2 guarantees exactly-once protocol delivery between network peers via a 4-step handshake (PUBLISH $\rightarrow$ PUBREC $\rightarrow$ PUBREL $\rightarrow$ PUBCOMP), not human or operator perception of an alarm.
+4. **Logical Alert vs Retransmission Count**: Retransmitted attempts share the same logical `alert_id` and are distinguished by an `attempt_id`. Subscriber receipts are deduplicated to avoid inflating delivery counts.
+
+### Dual Evaluation Modes
+- **Mode 1 — Controlled Simulation Mode**: Evaluates all policies against a deterministic, reproducible network model (`SimulatedNetworkModel`) with configurable packet loss rate, jitter, propagation delay, and reverse ACK loss using fixed random seeds. All policies receive the exact same sequence of pseudo-random channel draws.
+- **Mode 2 — Live MQTT Mode**: Publishes real messages across the local Eclipse Mosquitto broker (`127.0.0.1:1883`) to record real network socket latencies and events.
+
+---
+
 ## Execution Commands
 
-### 1. Launch the Streamlit Dashboard (Phase 4 UI)
+### 1. Launch the Streamlit Dashboard (Phase 5 UI)
 ```powershell
 streamlit run app.py
 ```
+*Navigate to the **⚖️ ACK Policy Comparison** tab to configure workload parameters, adjust network loss/latency sliders, run comparisons, and export CSV reports.*
 
-### 2. Run the Full Automated Pytest Suite (119 Tests)
+### 2. Run the Phase 5 Policy Benchmark CLI Demonstration
+```powershell
+python scripts/demo_policy_comparison.py
+```
+
+### 3. Run the Full Automated Pytest Suite (138 Tests)
 ```powershell
 python -m pytest tests/
 ```
 
-### 3. Run the Live End-to-End MQTT Alert Demonstration
+### 4. Run Phase 5 Dedicated Policy Tests
+```powershell
+python -m pytest tests/test_ack_policies.py -v
+```
+
+### 5. Run the Live End-to-End MQTT Alert Demonstration
 ```powershell
 python scripts/demo_mqtt_alert.py
 ```
 
-### 4. Launch Standalone Background MQTT Receiver
-```powershell
-python -m rl_ack.mqtt.receiver
-```
-
-### 5. Run the Virtual Sensor CLI Verification Demo
-```powershell
-python scripts/demo_sensors.py
-```
-
-### 6. Run Diagnostic Stack Check
-```powershell
-python main.py
-```
-
 ---
 
-## Phase 4 Scope Boundaries & Subsystems Status
+## Phase 5 Scope Boundaries & Roadmap
 
-In strict adherence to Phase 4 scope:
+In strict adherence to Phase 5 scope:
 - **Implemented Subsystems**:
-  - Eclipse Mosquitto broker integration and Paho MQTT client (v2 Callback API).
-  - Configurable centralized MQTT configuration with environment variable overrides.
-  - Strict topic taxonomy: `rlack/kitchen/alerts`, `rlack/kitchen/alerts/ack`, `rlack/kitchen/telemetry`.
-  - JSON payload validation and deserialization (`AlertMessage.from_json()`).
-  - Asynchronous non-blocking publisher (`MqttAlertPublisher`) tracking broker PUBACK callbacks.
-  - Independent subscriber (`MqttAlertSubscriber`) verifying alerts, detecting duplicates, and returning application receipt ACKs.
-  - Multi-stage delivery verification tracker (`DeliveryTracker`) separating protocol QoS from application confirmation.
-  - Real wall-clock latency measurement (publication, subscriber receipt, application ACK, and end-to-end round trip).
-  - Interactive Streamlit MQTT Delivery Center tab with real-time status, QoS selector, and verification log.
-  - Standalone CLI receiver and end-to-end verification demo script.
-- **Subsystems Intentionally Deferred to Subsequent Phases**:
-  - **No Six-Policy Comparative Analysis**: Fixed ACK policies and comparative evaluations belong to Phase 5.
-  - **No DQN Training or Adaptive ACK Selection**: Deep Q-Network training, experience replay, and adaptive action selection belong to subsequent phases.
-  - **No SQLite Persistence**: Database logging and CSV export belong to Phase 10.
-  - **No DQN Training or Adaptive ACK Decisions**: The DQN neural network, action selection, and ACK policy comparisons belong to Phases 6, 7 & 8.
-  - **No SQLite Persistence**: Experiment runs and database persistence belong to Phase 10.
+  - Five distinct, configurable fixed ACK policies adhering to `IAckPolicy` and `BaseAckPolicy`.
+  - Reusable `SimulatedNetworkModel` with deterministic random seed reproducibility.
+  - Standardized `WorkloadGenerator` spanning Critical Control (`CC`), High Bandwidth Streaming (`HBS`), and Best Effort (`BET`).
+  - `PolicyExperimentRunner` orchestrating comparative evaluations across all 5 strategies.
+  - Comprehensive statistical performance metrics: Delivery confirmation rate, Mean/Median/P95 latency, Deadline compliance, and Protocol overhead.
+  - Interactive Streamlit Policy Comparison tab featuring side-by-side KPI tables, Plotly reliability/latency/overhead charts, and CSV download buttons.
+  - Standalone CLI benchmark demonstration script (`scripts/demo_policy_comparison.py`).
+  - Automated test suite covering all policies and channel conditions (138 total project tests passing).
+- **Subsystems Intentionally Deferred to Phase 6**:
+  - **No Deep Q-Network (DQN) Training**: Neural network architecture, Q-learning loss functions, and experience replay buffer belong to Phase 6.
+  - **No Adaptive Action Selection**: Dynamic real-time ACK policy selection by reinforcement learning belongs to Phase 6.
+  - **No SQLite Experiment Persistence**: Database storage integration belongs to subsequent phases.

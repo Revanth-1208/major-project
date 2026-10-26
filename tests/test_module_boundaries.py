@@ -19,7 +19,7 @@ MODULE_SPECS = [
     ("rl_ack.topology", 3, "topology", True),  # Module 3 implemented in Phase 2
     ("rl_ack.monitoring", 4, "monitoring", True),  # Module 4 implemented in Phase 3
     ("rl_ack.mqtt", 5, "mqtt", True),  # Module 5 implemented in Phase 4
-    ("rl_ack.policies", 6, "policies", False),
+    ("rl_ack.policies", 6, "policies", True),  # Module 6 implemented in Phase 5
     ("rl_ack.dqn", 7, "dqn", False),
     ("rl_ack.controller", 8, "controller", False),
     ("rl_ack.simulation", 9, "simulation", False),

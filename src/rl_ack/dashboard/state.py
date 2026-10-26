@@ -10,6 +10,10 @@ from rl_ack.common.models import AlertMessage, SensorReading
 from rl_ack.monitoring.detector import IncidentDetector
 from rl_ack.monitoring.manager import IncidentManager
 from rl_ack.mqtt.manager import MqttManager
+from rl_ack.policies.base import PolicyConfig
+from rl_ack.policies.network_model import NetworkModelConfig
+from rl_ack.policies.runner import PolicyExperimentRunner
+from rl_ack.policies.workload import WorkloadGenerator
 from rl_ack.sensors.sensor_engine import SensorEngine
 from rl_ack.sensors.scenarios import (
     SensorScenario,
@@ -56,6 +60,8 @@ class DashboardSimulationManager:
         self.mqtt_manager = MqttManager()
         self.auto_publish_mqtt: bool = True
         self.mqtt_qos: int = 1
+        self.policy_runner = PolicyExperimentRunner()
+        self.workload_generator = WorkloadGenerator(random_seed=self.random_seed)
         self.active_scenario: Optional[SensorScenario] = None
         self._history: deque[SensorReading] = deque(maxlen=self.max_history)
         self._applied_event_indices: set[int] = set()
@@ -352,5 +358,87 @@ class DashboardSimulationManager:
         """Update active MQTT alert publication QoS level."""
         self.mqtt_qos = qos
         self.mqtt_manager.config.default_alert_qos = qos
+
+    def run_policy_comparison_controlled(
+        self,
+        workload_size: int = 20,
+        seed: int = 42,
+        packet_loss_rate: float = 0.10,
+        base_latency_ms: float = 15.0,
+        jitter_ms: float = 5.0,
+        ack_loss_rate: float = 0.05,
+        ack_timeout_ms: float = 150.0,
+        max_retries: int = 3,
+        deadline_ms: float = 100.0,
+        progress_callback: Any = None,
+    ) -> pd.DataFrame:
+        """Run Phase 5 controlled evaluation comparing all five ACK policies."""
+        # 1. Generate standardized workload
+        self.workload_generator.set_seed(seed)
+        workload = self.workload_generator.generate_workload(count=workload_size)
+
+        # 2. Configure network and policy limits
+        net_cfg = NetworkModelConfig(
+            latency_base_ms=base_latency_ms,
+            jitter_ms=jitter_ms,
+            packet_loss_rate=packet_loss_rate,
+            ack_loss_rate=ack_loss_rate,
+            random_seed=seed,
+        )
+
+        for pol in self.policy_runner.policies.values():
+            pol.config.ack_timeout_ms = ack_timeout_ms
+            pol.config.max_retries = max_retries
+            pol.config.deadline_ms = deadline_ms
+
+        self.policy_runner.run_controlled_comparison(
+            workload=workload,
+            network_config=net_cfg,
+            progress_callback=progress_callback,
+        )
+
+        return self.policy_runner.to_summary_dataframe()
+
+    def run_policy_comparison_live(
+        self,
+        message_count: int = 5,
+        ack_timeout_ms: float = 150.0,
+        max_retries: int = 2,
+        deadline_ms: float = 100.0,
+        progress_callback: Any = None,
+    ) -> pd.DataFrame:
+        """Run Phase 5 live evaluation against connected Mosquitto broker."""
+        self.workload_generator.set_seed(int(time.time()))
+        workload = self.workload_generator.generate_workload(count=message_count)
+
+        for pol in self.policy_runner.policies.values():
+            pol.config.ack_timeout_ms = ack_timeout_ms
+            pol.config.max_retries = max_retries
+            pol.config.deadline_ms = deadline_ms
+
+        self.policy_runner.run_live_comparison(
+            workload=workload,
+            mqtt_manager=self.mqtt_manager,
+            progress_callback=progress_callback,
+        )
+
+        return self.policy_runner.to_summary_dataframe()
+
+    def get_policy_summary_df(self) -> pd.DataFrame:
+        """Return pandas DataFrame of the most recent policy comparison summary."""
+        return self.policy_runner.to_summary_dataframe()
+
+    def get_policy_results_df(self) -> pd.DataFrame:
+        """Return pandas DataFrame of the most recent granular message evaluations."""
+        return self.policy_runner.to_results_dataframe()
+
+    def export_policy_summary_csv(self) -> str:
+        """Return summary metrics formatted as CSV string."""
+        return self.policy_runner.export_summary_csv()
+
+    def export_policy_results_csv(self) -> str:
+        """Return granular results formatted as CSV string."""
+        return self.policy_runner.export_results_csv()
+
 
 

@@ -488,3 +488,264 @@ def render_mqtt_delivery_tab(manager: Any) -> None:
     )
 
 
+def render_policy_comparison_tab(manager: Any) -> None:
+    """Render Phase 5 ACK Policy Engine and Comparative Evaluation Center."""
+    st.subheader("⚖️ ACK Policy Engine & Comparative Evaluation Center")
+    st.caption(
+        "Empirical benchmark evaluating five fixed acknowledgment strategies under identical traffic "
+        "workloads and channel conditions before adaptive DQN controller implementation."
+    )
+
+    # Evaluation Mode & Parameter Controls
+    col_mode, col_info = st.columns([1, 2])
+    with col_mode:
+        eval_mode = st.radio(
+            "Evaluation Environment",
+            options=["Controlled Simulation (Deterministic)", "Live MQTT Broker (Mosquitto)"],
+            index=0,
+            help="Controlled Simulation enforces identical packet drop & delay events; Live MQTT tests physical sockets.",
+        )
+    with col_info:
+        st.markdown(
+            """
+            <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; padding: 12px 16px; border-radius: 8px; font-size: 13px;">
+                <b>Five Evaluated Strategies:</b><br/>
+                • <b>Policy A (Static QoS 0):</b> Fire-and-forget, zero retries, minimal overhead.<br/>
+                • <b>Policy B (Static Local ACK):</b> Proximate edge proxy ACK, decouples sender without E2E proof.<br/>
+                • <b>Policy C (Static QoS 1 + Retries):</b> Broker PUBACK + application-level bounded retries on timeout.<br/>
+                • <b>Policy D (Local ACK + Selective Retransmit):</b> Immediate edge ACK + retries reserved for Critical Control (CC).<br/>
+                • <b>Policy E (Static QoS 2):</b> 4-way protocol handshake (PUBLISH &rarr; PUBREC &rarr; PUBREL &rarr; PUBCOMP).
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("---")
+
+    is_controlled = "Controlled" in eval_mode
+
+    if is_controlled:
+        st.markdown("##### 🎛️ Controlled Simulation Parameters")
+        col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+        with col_c1:
+            workload_size = st.slider("Workload Size (Messages)", min_value=10, max_value=100, value=25, step=5)
+        with col_c2:
+            seed_val = st.number_input("Deterministic Random Seed", min_value=1, max_value=999999, value=42, step=1)
+        with col_c3:
+            loss_rate = st.slider("Channel Packet Loss Rate", min_value=0.0, max_value=0.35, value=0.10, step=0.05, format="%.2f")
+        with col_c4:
+            base_lat = st.slider("Base Latency (ms)", min_value=5.0, max_value=60.0, value=15.0, step=5.0)
+
+        with st.expander("🛠️ Advanced Network & Protocol Thresholds", expanded=False):
+            col_a1, col_a2, col_a3, col_a4 = st.columns(4)
+            with col_a1:
+                jitter_val = st.slider("Stochastic Jitter (ms)", min_value=1.0, max_value=20.0, value=5.0, step=1.0)
+            with col_a2:
+                ack_loss_rate = st.slider("Reverse ACK Loss Rate", min_value=0.0, max_value=0.25, value=0.05, step=0.05, format="%.2f")
+            with col_a3:
+                ack_timeout = st.slider("ACK Timeout (ms)", min_value=50.0, max_value=500.0, value=150.0, step=25.0)
+            with col_a4:
+                max_retries = st.slider("Max Retransmissions", min_value=1, max_value=5, value=3, step=1)
+            deadline_val = st.slider("Delivery Latency Deadline (ms)", min_value=50.0, max_value=300.0, value=100.0, step=25.0)
+    else:
+        st.markdown("##### 🔌 Live MQTT Evaluation Configuration")
+        col_l1, col_l2 = st.columns(2)
+        with col_l1:
+            live_msg_count = st.slider("Live Test Messages", min_value=3, max_value=15, value=5, step=1)
+        with col_l2:
+            is_broker_ready = manager.mqtt_manager.is_connected
+            status_color = "🟢" if is_broker_ready else "🔴"
+            st.markdown(f"**Live Broker Link:** {status_color} `{manager.mqtt_manager.broker_status}`")
+            if not is_broker_ready:
+                st.warning("⚠️ Connect clients in the '📡 MQTT Alert Delivery' tab before running live comparisons.")
+
+    # Execution Action Button
+    if st.button("🚀 Run Comparative Policy Evaluation", width="stretch"):
+        progress_bar = st.progress(0.0)
+        status_text = st.empty()
+
+        def update_progress(pct: float, msg: str):
+            progress_bar.progress(pct)
+            status_text.text(msg)
+
+        if is_controlled:
+            df_summary = manager.run_policy_comparison_controlled(
+                workload_size=workload_size,
+                seed=int(seed_val),
+                packet_loss_rate=loss_rate,
+                base_latency_ms=base_lat,
+                jitter_ms=jitter_val,
+                ack_loss_rate=ack_loss_rate,
+                ack_timeout_ms=ack_timeout,
+                max_retries=max_retries,
+                deadline_ms=deadline_val,
+                progress_callback=update_progress,
+            )
+        else:
+            if not manager.mqtt_manager.is_connected:
+                st.error("Cannot run live evaluation: MQTT broker is offline.")
+                return
+            df_summary = manager.run_policy_comparison_live(
+                message_count=live_msg_count,
+                progress_callback=update_progress,
+            )
+
+        progress_bar.progress(1.0)
+        status_text.text("✅ Comparative Evaluation Complete!")
+        st.session_state.has_run_policy_eval = True
+        st.rerun()
+
+    st.markdown("---")
+
+    # Present Results if available
+    df_summary = manager.get_policy_summary_df()
+    df_results = manager.get_policy_results_df()
+
+    if not df_summary.empty:
+        st.subheader("📊 Comparative Policy Performance Summary")
+        st.caption("Side-by-side analysis under identical workload traffic and channel conditions.")
+        st.dataframe(df_summary, width="stretch", hide_index=True)
+
+        # Comparative Visualization Charts
+        st.markdown("##### 📈 Visual Performance Benchmarks")
+        tab_c1, tab_c2, tab_c3 = st.tabs(["🎯 Delivery Reliability", "⏱️ End-to-End Latency", "📦 Protocol Overhead & Retries"])
+
+        with tab_c1:
+            # Bar chart comparing Delivery Confirmation Rate & Broker/Local ACK rates
+            fig_rel = go.Figure()
+            policies = df_summary["Policy"].tolist()
+            fig_rel.add_trace(go.Bar(
+                name="Delivery Confirmed Rate (%)",
+                x=policies,
+                y=df_summary["Delivery Confirmed Rate (%)"],
+                marker_color="#10B981",
+            ))
+            fig_rel.add_trace(go.Bar(
+                name="Subscriber Received Rate (%)",
+                x=policies,
+                y=df_summary["Subscriber Receipt Rate (%)"],
+                marker_color="#3B82F6",
+            ))
+            fig_rel.add_trace(go.Bar(
+                name="Local Proxy ACK Rate (%)",
+                x=policies,
+                y=df_summary["Local ACK Rate (%)"],
+                marker_color="#F59E0B",
+            ))
+            fig_rel.update_layout(
+                barmode="group",
+                title="Delivery Reliability & Verification Rates Across Strategies",
+                yaxis_title="Rate (%)",
+                yaxis=dict(range=[0, 105]),
+                margin=dict(l=40, r=40, t=50, b=40),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            )
+            st.plotly_chart(fig_rel, width="stretch")
+
+        with tab_c2:
+            # Latency Comparison: Mean, Median, P95
+            fig_lat = go.Figure()
+            fig_lat.add_trace(go.Bar(
+                name="Mean Latency (ms)",
+                x=policies,
+                y=df_summary["Mean E2E Latency (ms)"],
+                marker_color="#6366F1",
+            ))
+            fig_lat.add_trace(go.Bar(
+                name="Median Latency (ms)",
+                x=policies,
+                y=df_summary["Median E2E Latency (ms)"],
+                marker_color="#8B5CF6",
+            ))
+            fig_lat.add_trace(go.Bar(
+                name="P95 Latency (ms)",
+                x=policies,
+                y=df_summary["P95 E2E Latency (ms)"],
+                marker_color="#EC4899",
+            ))
+            fig_lat.update_layout(
+                barmode="group",
+                title="End-to-End Delivery Latency Metrics (Confirmed Messages Only)",
+                yaxis_title="Latency (ms)",
+                margin=dict(l=40, r=40, t=50, b=40),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            )
+            st.plotly_chart(fig_lat, width="stretch")
+
+        with tab_c3:
+            # Overhead (Bytes) & Retransmission counts
+            fig_ovh = go.Figure()
+            fig_ovh.add_trace(go.Bar(
+                name="Avg Overhead per Msg (Bytes)",
+                x=policies,
+                y=df_summary["Avg Overhead / Msg (B)"],
+                marker_color="#0EA5E9",
+                yaxis="y",
+            ))
+            fig_ovh.add_trace(go.Scatter(
+                name="Retransmission Count",
+                x=policies,
+                y=df_summary["Retransmissions"],
+                mode="lines+markers",
+                marker=dict(size=10, color="#EF4444"),
+                line=dict(width=3, color="#EF4444"),
+                yaxis="y2",
+            ))
+            fig_ovh.update_layout(
+                title="Transmitted Protocol Overhead vs Application Retransmissions",
+                yaxis=dict(title="Overhead (Bytes / Msg)"),
+                yaxis2=dict(title="Total Retransmissions", overlaying="y", side="right"),
+                margin=dict(l=40, r=40, t=50, b=40),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            )
+            st.plotly_chart(fig_ovh, width="stretch")
+
+        # Critical Control (CC) Emergency Performance Section
+        st.markdown("---")
+        st.subheader("🚨 Critical Control (CC) Emergency Performance")
+        st.caption("Evaluates resilience specifically for emergency gas leaks and fire/smoke alerts.")
+        cc_cols = ["Policy", "CC Total", "CC Delivery Rate (%)", "CC Mean Latency (ms)", "HBS Delivery Rate (%)", "BET Delivery Rate (%)"]
+        st.dataframe(df_summary[cc_cols], width="stretch", hide_index=True)
+
+        # Granular Per-Message Audit Trail
+        st.markdown("---")
+        st.subheader("📋 Granular Message Evaluation Audit Trail")
+        st.caption("Inspect individual message routing, retries, and latency measurements.")
+        selected_pol = st.selectbox("Filter by Policy", options=["All Policies"] + policies)
+        if selected_pol != "All Policies":
+            filtered_df = df_results[df_results["policy_name"] == selected_pol]
+        else:
+            filtered_df = df_results
+        st.dataframe(filtered_df, width="stretch", hide_index=True, height=280)
+
+        # CSV Export Buttons
+        st.markdown("---")
+        st.subheader("📥 Export Evaluation Data")
+        col_exp1, col_exp2 = st.columns(2)
+        with col_exp1:
+            csv_summary = manager.export_policy_summary_csv()
+            st.download_button(
+                label="📄 Download Summary Metrics CSV",
+                data=csv_summary,
+                file_name="rlack_policy_comparison_summary.csv",
+                mime="text/csv",
+                width="stretch",
+            )
+        with col_exp2:
+            csv_results = manager.export_policy_results_csv()
+            st.download_button(
+                label="📄 Download Granular Audit Trail CSV",
+                data=csv_results,
+                file_name="rlack_policy_message_results.csv",
+                mime="text/csv",
+                width="stretch",
+            )
+    else:
+        st.info(
+            "💡 **No Evaluation Run Yet:** Select evaluation mode above and click "
+            "**🚀 Run Comparative Policy Evaluation** to compare all five acknowledgment strategies "
+            "under identical conditions."
+        )
+
+
+
