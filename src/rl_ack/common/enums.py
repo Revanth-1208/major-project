@@ -93,8 +93,18 @@ class AlertSeverity(str, Enum):
 
 
 class NodeOperationalStatus(str, Enum):
-    """IoT sensor node operational status."""
+    """IoT sensor node operational and threshold status."""
     NORMAL = "normal"
     WARNING = "warning"
-    ALERTING = "alerting"
-    OFFLINE = "offline"
+    CRITICAL = "critical"
+    UNAVAILABLE = "unavailable"
+    # Backward compatibility aliases
+    ALERTING = "critical"
+    OFFLINE = "unavailable"
+
+
+class IncidentState(str, Enum):
+    """Incident tracking lifecycle states."""
+    ACTIVE = "active"
+    ACKNOWLEDGED = "acknowledged"
+    CLEARED = "cleared"

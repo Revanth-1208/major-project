@@ -9,6 +9,7 @@ from rl_ack.common.enums import NodeOperationalStatus, SensorType
 from rl_ack.common.interfaces import ISensor
 from rl_ack.common.models import SensorReading
 from rl_ack.sensors.config import SensorConfig
+from rl_ack.sensors.thresholds import StatusClassifier, create_classifier_for_sensor
 
 
 class BaseSensor(ISensor):
@@ -23,6 +24,7 @@ class BaseSensor(ISensor):
         epsilon_t ~ N(0, 1) sampled from a dedicated per-sensor RNG.
 
     The state is strictly clamped to [min_value, max_value] and rounded to precision_digits.
+    Status is derived dynamically from reading values and configured thresholds with hysteresis.
     """
 
     def __init__(self, config: SensorConfig) -> None:
@@ -32,13 +34,49 @@ class BaseSensor(ISensor):
         self._sequence_number: int = 0
         self._last_reading: Optional[SensorReading] = None
         self._next_sampling_time: float = float(self.config.sampling_interval_s)
-        self._status: NodeOperationalStatus = self.config.initial_status
+
+        # Build reusable status classifier with hysteresis
+        crit = self.config.critical_threshold if self.config.critical_threshold is not None else self.config.threshold
+        warn = self.config.warning_threshold if self.config.warning_threshold is not None else (self.config.baseline + (crit - self.config.baseline) * 0.5)
+        self._classifier: StatusClassifier = create_classifier_for_sensor(
+            sensor_type=self.config.sensor_type,
+            warning_threshold=warn,
+            critical_threshold=crit,
+            hysteresis=self.config.hysteresis,
+            warning_low=self.config.warning_low,
+            critical_low=self.config.critical_low,
+        )
+
+        self._explicit_unavailable: bool = (
+            self.config.initial_status in (NodeOperationalStatus.UNAVAILABLE, NodeOperationalStatus.OFFLINE)
+        )
+        if self._explicit_unavailable:
+            self._status = NodeOperationalStatus.UNAVAILABLE
+        else:
+            self._status = self._classifier.classify(self._current_value)
 
         # Environmental event state
         self._event_active: bool = False
         self._event_target: Optional[float] = None
         self._event_start_time: Optional[float] = None
         self._event_duration_s: Optional[float] = None
+
+    @property
+    def classifier(self) -> StatusClassifier:
+        """The sensor's status classifier."""
+        return self._classifier
+
+    @property
+    def warning_threshold(self) -> float:
+        return self.config.warning_threshold or 0.0
+
+    @property
+    def critical_threshold(self) -> float:
+        return self.config.critical_threshold if self.config.critical_threshold is not None else self.config.threshold
+
+    @property
+    def hysteresis(self) -> float:
+        return self.config.hysteresis
 
     @property
     def sensor_id(self) -> str:
@@ -67,7 +105,7 @@ class BaseSensor(ISensor):
 
     @property
     def threshold(self) -> float:
-        return self.config.threshold
+        return self.critical_threshold
 
     @property
     def status(self) -> NodeOperationalStatus:
@@ -98,8 +136,13 @@ class BaseSensor(ISensor):
         return (current_time + tolerance) >= self._next_sampling_time
 
     def set_operational_status(self, status: NodeOperationalStatus) -> None:
-        """Set sensor operational status (e.g. NORMAL vs OFFLINE)."""
-        self._status = status
+        """Set sensor operational status (e.g. NORMAL vs OFFLINE / UNAVAILABLE)."""
+        if status in (NodeOperationalStatus.UNAVAILABLE, NodeOperationalStatus.OFFLINE):
+            self._explicit_unavailable = True
+            self._status = NodeOperationalStatus.UNAVAILABLE
+        else:
+            self._explicit_unavailable = False
+            self._status = self._classifier.classify(self._current_value, NodeOperationalStatus.NORMAL)
 
     def trigger_event(
         self,
@@ -132,7 +175,7 @@ class BaseSensor(ISensor):
         """
         if active:
             # Scale target based on threshold and intensity
-            delta = (self.config.threshold - self.config.baseline)
+            delta = (self.critical_threshold - self.config.baseline)
             target = self.config.baseline + delta * max(1.1, float(intensity))
             self.trigger_event(target_value=target)
         else:
@@ -171,21 +214,21 @@ class BaseSensor(ISensor):
         self._current_value = rounded_val
         return rounded_val
 
-    def _is_threshold_exceeded(self, value: float) -> bool:
-        """Evaluate whether value exceeds threshold based on sensor characteristics."""
-        return value >= self.config.threshold
-
     def sample(self, current_time: float) -> Optional[SensorReading]:
         """Generate a dynamic reading for the current simulation timestamp.
 
-        Returns None if sensor is unavailable (not NORMAL).
+        Derives status from actual reading and configured thresholds with hysteresis.
+        Returns None if sensor is explicitly unavailable.
         """
-        if self._status != NodeOperationalStatus.NORMAL:
+        if self._explicit_unavailable:
             return None
 
         self._sequence_number += 1
         new_value = self._step_value(current_time)
-        threshold_exceeded = self._is_threshold_exceeded(new_value)
+
+        # Classify status from current reading and update internal state
+        self._status = self._classifier.classify(new_value, self._status)
+        threshold_exceeded = (self._status == NodeOperationalStatus.CRITICAL)
 
         reading = SensorReading(
             sensor_id=self.config.sensor_id,
@@ -212,7 +255,14 @@ class BaseSensor(ISensor):
         self._sequence_number = 0
         self._last_reading = None
         self._next_sampling_time = float(self.config.sampling_interval_s)
-        self._status = self.config.initial_status
+        self._explicit_unavailable = (
+            self.config.initial_status in (NodeOperationalStatus.UNAVAILABLE, NodeOperationalStatus.OFFLINE)
+        )
+        self._classifier.reset(self.config.initial_status)
+        if not self._explicit_unavailable:
+            self._status = self._classifier.classify(self._current_value)
+        else:
+            self._status = NodeOperationalStatus.UNAVAILABLE
         self.clear_event()
 
     def get_metadata(self) -> Dict[str, Any]:
@@ -223,6 +273,9 @@ class BaseSensor(ISensor):
             "sequence_number": self._sequence_number,
             "next_sampling_time": self._next_sampling_time,
             "status": self._status.value,
+            "warning_threshold": self.warning_threshold,
+            "critical_threshold": self.critical_threshold,
+            "hysteresis": self.hysteresis,
             "event_active": self._event_active,
             "event_target": self._event_target,
         }

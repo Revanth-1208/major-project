@@ -26,7 +26,12 @@ class SensorConfig:
     max_value: float
     sampling_interval_s: float
     host_node_id: str
-    threshold: float
+    threshold: float = 0.0
+    warning_threshold: Optional[float] = None
+    critical_threshold: Optional[float] = None
+    hysteresis: float = 0.0
+    warning_low: Optional[float] = None
+    critical_low: Optional[float] = None
     noise_std: float = 0.5
     mean_reversion_k: float = 0.1
     random_seed: int = 42
@@ -34,6 +39,45 @@ class SensorConfig:
     precision_digits: int = 2
 
     def __post_init__(self) -> None:
+        # Reconcile threshold / critical_threshold
+        if self.critical_threshold is None:
+            self.critical_threshold = float(self.threshold)
+        elif self.threshold == 0.0 and self.critical_threshold is not None:
+            self.threshold = float(self.critical_threshold)
+
+        # Set default warning thresholds based on sensor type if not explicitly supplied
+        if self.warning_threshold is None:
+            if self.sensor_type == SensorType.GAS:
+                self.warning_threshold = 100.0
+                if self.hysteresis == 0.0:
+                    self.hysteresis = 5.0
+            elif self.sensor_type == SensorType.TEMPERATURE:
+                self.warning_threshold = 38.0
+                if self.hysteresis == 0.0:
+                    self.hysteresis = 1.0
+            elif self.sensor_type == SensorType.SMOKE:
+                self.warning_threshold = 1.0
+                if self.hysteresis == 0.0:
+                    self.hysteresis = 0.1
+            elif self.sensor_type == SensorType.HUMIDITY:
+                self.warning_threshold = 70.0
+                if self.warning_low is None:
+                    self.warning_low = 30.0
+                if self.critical_low is None:
+                    self.critical_low = 15.0
+                if self.hysteresis == 0.0:
+                    self.hysteresis = 2.0
+            else:
+                self.warning_threshold = self.baseline + (self.critical_threshold - self.baseline) * 0.5
+
+        if self.sensor_type == SensorType.HUMIDITY:
+            if self.warning_low is None:
+                self.warning_low = 30.0
+            if self.critical_low is None:
+                self.critical_low = 15.0
+            if self.hysteresis == 0.0:
+                self.hysteresis = 2.0
+
         self.validate()
 
     def validate(self) -> None:
@@ -84,8 +128,31 @@ class SensorConfig:
                 f"mean_reversion_k must be between 0.0 and 1.0 inclusive, got {self.mean_reversion_k}."
             )
 
-        if not math.isfinite(self.threshold):
-            raise ConfigurationError("threshold must be a finite number.")
+        crit = self.critical_threshold if self.critical_threshold is not None else self.threshold
+        if not math.isfinite(crit):
+            raise ConfigurationError("threshold/critical_threshold must be a finite number.")
+
+        if self.warning_threshold is not None and not math.isfinite(self.warning_threshold):
+            raise ConfigurationError("warning_threshold must be a finite number.")
+
+        if self.hysteresis < 0.0:
+            raise ConfigurationError("hysteresis cannot be negative.")
+
+        if self.sensor_type != SensorType.HUMIDITY and self.warning_threshold is not None:
+            if self.warning_threshold >= crit:
+                raise ConfigurationError(
+                    f"warning_threshold ({self.warning_threshold}) must be strictly less than "
+                    f"critical_threshold ({crit})."
+                )
+
+        if self.sensor_type == SensorType.HUMIDITY:
+            if self.warning_low is not None and self.critical_low is not None:
+                if not (self.critical_low < self.warning_low <= (self.warning_threshold or 70.0) < crit):
+                    raise ConfigurationError(
+                        f"Humidity thresholds must satisfy: critical_low ({self.critical_low}) < "
+                        f"warning_low ({self.warning_low}) <= warning_high ({self.warning_threshold}) < "
+                        f"critical_high ({crit})."
+                    )
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert configuration to dictionary."""
@@ -99,6 +166,11 @@ class SensorConfig:
             "sampling_interval_s": self.sampling_interval_s,
             "host_node_id": self.host_node_id,
             "threshold": self.threshold,
+            "warning_threshold": self.warning_threshold,
+            "critical_threshold": self.critical_threshold,
+            "hysteresis": self.hysteresis,
+            "warning_low": self.warning_low,
+            "critical_low": self.critical_low,
             "noise_std": self.noise_std,
             "mean_reversion_k": self.mean_reversion_k,
             "random_seed": self.random_seed,
@@ -113,9 +185,13 @@ def get_default_gas_config(
     random_seed: int = 42,
     sampling_interval_s: float = 1.0,
     baseline: float = 50.0,
-    threshold: float = 400.0,
+    warning_threshold: float = 100.0,
+    critical_threshold: float = 400.0,
+    hysteresis: float = 5.0,
+    threshold: Optional[float] = None,
 ) -> SensorConfig:
     """Default configuration for virtual gas sensor."""
+    crit = critical_threshold if threshold is None else threshold
     return SensorConfig(
         sensor_id=sensor_id,
         sensor_type=SensorType.GAS,
@@ -125,7 +201,10 @@ def get_default_gas_config(
         max_value=1000.0,
         sampling_interval_s=sampling_interval_s,
         host_node_id=host_node_id,
-        threshold=threshold,
+        threshold=crit,
+        warning_threshold=warning_threshold,
+        critical_threshold=crit,
+        hysteresis=hysteresis,
         noise_std=2.0,
         mean_reversion_k=0.1,
         random_seed=random_seed,
@@ -139,9 +218,13 @@ def get_default_temperature_config(
     random_seed: int = 43,
     sampling_interval_s: float = 1.0,
     baseline: float = 24.0,
-    threshold: float = 55.0,
+    warning_threshold: float = 38.0,
+    critical_threshold: float = 55.0,
+    hysteresis: float = 1.0,
+    threshold: Optional[float] = None,
 ) -> SensorConfig:
     """Default configuration for virtual temperature sensor."""
+    crit = critical_threshold if threshold is None else threshold
     return SensorConfig(
         sensor_id=sensor_id,
         sensor_type=SensorType.TEMPERATURE,
@@ -151,7 +234,10 @@ def get_default_temperature_config(
         max_value=100.0,
         sampling_interval_s=sampling_interval_s,
         host_node_id=host_node_id,
-        threshold=threshold,
+        threshold=crit,
+        warning_threshold=warning_threshold,
+        critical_threshold=crit,
+        hysteresis=hysteresis,
         noise_std=0.3,
         mean_reversion_k=0.1,
         random_seed=random_seed,
@@ -165,9 +251,15 @@ def get_default_humidity_config(
     random_seed: int = 44,
     sampling_interval_s: float = 2.0,
     baseline: float = 45.0,
-    threshold: float = 85.0,
+    warning_low: float = 30.0,
+    warning_high: float = 70.0,
+    critical_low: float = 15.0,
+    critical_high: float = 85.0,
+    hysteresis: float = 2.0,
+    threshold: Optional[float] = None,
 ) -> SensorConfig:
     """Default configuration for virtual relative humidity sensor."""
+    crit = critical_high if threshold is None else threshold
     return SensorConfig(
         sensor_id=sensor_id,
         sensor_type=SensorType.HUMIDITY,
@@ -177,7 +269,12 @@ def get_default_humidity_config(
         max_value=100.0,
         sampling_interval_s=sampling_interval_s,
         host_node_id=host_node_id,
-        threshold=threshold,
+        threshold=crit,
+        warning_threshold=warning_high,
+        critical_threshold=crit,
+        warning_low=warning_low,
+        critical_low=critical_low,
+        hysteresis=hysteresis,
         noise_std=0.5,
         mean_reversion_k=0.08,
         random_seed=random_seed,
@@ -191,9 +288,13 @@ def get_default_smoke_config(
     random_seed: int = 45,
     sampling_interval_s: float = 1.0,
     baseline: float = 0.2,
-    threshold: float = 3.5,
+    warning_threshold: float = 1.0,
+    critical_threshold: float = 3.5,
+    hysteresis: float = 0.1,
+    threshold: Optional[float] = None,
 ) -> SensorConfig:
     """Default configuration for virtual optical smoke sensor."""
+    crit = critical_threshold if threshold is None else threshold
     return SensorConfig(
         sensor_id=sensor_id,
         sensor_type=SensorType.SMOKE,
@@ -203,7 +304,10 @@ def get_default_smoke_config(
         max_value=20.0,
         sampling_interval_s=sampling_interval_s,
         host_node_id=host_node_id,
-        threshold=threshold,
+        threshold=crit,
+        warning_threshold=warning_threshold,
+        critical_threshold=crit,
+        hysteresis=hysteresis,
         noise_std=0.02,
         mean_reversion_k=0.15,
         random_seed=random_seed,

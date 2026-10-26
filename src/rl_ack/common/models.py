@@ -8,6 +8,7 @@ from rl_ack.common.enums import (
     AckAction,
     AlertSeverity,
     DeliveryStatus,
+    IncidentState,
     NodeOperationalStatus,
     SensorType,
     TrafficClass,
@@ -97,36 +98,125 @@ class SensorReading:
 
 @dataclass
 class AlertMessage:
-    """Distinct incident alert payload transmitted over MQTT."""
+    """Distinct incident alert payload transmitted over MQTT.
+
+    Supports complete emergency-alert architecture with end-to-end delivery tracking.
+    """
     alert_id: str
     sensor_id: str
-    host_node: str
-    sensor_type: SensorType
-    severity: AlertSeverity
-    traffic_class: TrafficClass
-    reading_value: float
-    threshold_value: float
-    timestamp: float
-    status: DeliveryStatus = DeliveryStatus.GENERATED
-    chosen_action: Optional[AckAction] = None
+    severity: AlertSeverity = AlertSeverity.WARNING
+    reading_value: float = 0.0
+    threshold_value: float = 0.0
+    unit: str = ""
+    incident_type: str = "threshold_violation"
+    simulation_time_s: float = 0.0
+    created_at_utc: str = ""
+    priority: TrafficClass = TrafficClass.CRITICAL_CONTROL
+    destination_topic: str = "iot/sensors/alerts"
+    delivery_status: DeliveryStatus = DeliveryStatus.GENERATED
+    published_at_utc: Optional[str] = None
+    broker_ack_at_utc: Optional[str] = None
+    received_at_utc: Optional[str] = None
+    app_ack_at_utc: Optional[str] = None
     retry_count: int = 0
+    failure_reason: Optional[str] = None
+    chosen_action: Optional[AckAction] = None
+    incident_id: Optional[str] = None
+
+    # Backward-compatibility aliases
+    host_node: str = ""
+    sensor_type: Optional[SensorType] = None
+    timestamp: Optional[float] = None
+    traffic_class: Optional[TrafficClass] = None
+    status: Optional[DeliveryStatus] = None
     payload: Dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        from datetime import datetime, timezone
+
+        if self.timestamp is not None and self.simulation_time_s == 0.0:
+            self.simulation_time_s = float(self.timestamp)
+        elif self.simulation_time_s and self.timestamp is None:
+            self.timestamp = self.simulation_time_s
+
+        if self.traffic_class is not None and self.priority == TrafficClass.CRITICAL_CONTROL:
+            self.priority = self.traffic_class
+        elif self.priority and self.traffic_class is None:
+            self.traffic_class = self.priority
+
+        if self.status is not None and self.delivery_status == DeliveryStatus.GENERATED:
+            self.delivery_status = self.status
+        elif self.delivery_status and self.status is None:
+            self.status = self.delivery_status
+
+        if not self.created_at_utc:
+            self.created_at_utc = datetime.now(timezone.utc).isoformat()
+
     def to_dict(self) -> Dict[str, Any]:
+        s_type = self.sensor_type.value if hasattr(self.sensor_type, "value") else str(self.sensor_type or "")
         return {
             "alert_id": self.alert_id,
             "sensor_id": self.sensor_id,
-            "host_node": self.host_node,
-            "sensor_type": self.sensor_type.value,
+            "incident_type": self.incident_type,
             "severity": self.severity.value,
-            "traffic_class": self.traffic_class.value,
             "reading_value": self.reading_value,
             "threshold_value": self.threshold_value,
-            "timestamp": self.timestamp,
-            "status": self.status.value,
-            "chosen_action": self.chosen_action.value if self.chosen_action is not None else None,
+            "unit": self.unit,
+            "simulation_time_s": self.simulation_time_s,
+            "created_at_utc": self.created_at_utc,
+            "priority": self.priority.value,
+            "destination_topic": self.destination_topic,
+            "delivery_status": self.delivery_status.value,
+            "published_at_utc": self.published_at_utc,
+            "broker_ack_at_utc": self.broker_ack_at_utc,
+            "received_at_utc": self.received_at_utc,
+            "app_ack_at_utc": self.app_ack_at_utc,
             "retry_count": self.retry_count,
+            "failure_reason": self.failure_reason,
+            "chosen_action": self.chosen_action.value if self.chosen_action is not None else None,
+            "incident_id": self.incident_id,
+            # Backward-compatibility keys
+            "host_node": self.host_node,
+            "sensor_type": s_type,
+            "traffic_class": self.priority.value,
+            "timestamp": self.simulation_time_s,
+            "status": self.delivery_status.value,
             "payload": self.payload,
+        }
+
+
+@dataclass
+class IncidentRecord:
+    """Tracks the lifecycle of an ongoing or cleared incident.
+
+    Prevents generating redundant alert instances on every consecutive sample
+    while the same underlying incident condition persists.
+    """
+    incident_id: str
+    sensor_id: str
+    incident_type: str
+    state: IncidentState = IncidentState.ACTIVE
+    severity: AlertSeverity = AlertSeverity.WARNING
+    trigger_reading: float = 0.0
+    trigger_time_s: float = 0.0
+    last_reading: float = 0.0
+    last_updated_time_s: float = 0.0
+    cleared_time_s: Optional[float] = None
+    associated_alert_ids: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "incident_id": self.incident_id,
+            "sensor_id": self.sensor_id,
+            "incident_type": self.incident_type,
+            "state": self.state.value,
+            "severity": self.severity.value,
+            "trigger_reading": self.trigger_reading,
+            "trigger_time_s": self.trigger_time_s,
+            "last_reading": self.last_reading,
+            "last_updated_time_s": self.last_updated_time_s,
+            "cleared_time_s": self.cleared_time_s,
+            "associated_alert_ids": self.associated_alert_ids,
         }
 
 
