@@ -14,6 +14,7 @@ from rl_ack.common.exceptions import (
     BrokerConnectionError,
     ConfigurationError,
     DQNModelError,
+    InvalidStateTransitionError,
     PolicyExecutionError,
     RLAckError,
     SensorSimulationError,
@@ -68,4 +69,5 @@ __all__ = [
     "DQNModelError",
     "StorageError",
     "SensorSimulationError",
+    "InvalidStateTransitionError",
 ]

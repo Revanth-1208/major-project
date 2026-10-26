@@ -27,6 +27,7 @@ from rl_ack.dashboard.components import (
     render_sensor_cards,
     render_preview_charts,
     render_topology_section,
+    render_incident_monitoring_tab,
 )
 from rl_ack.topology.models import create_smart_kitchen_topology
 
@@ -146,9 +147,10 @@ st.sidebar.markdown(
     <div style="font-size: 12px; color: #64748B;">
         <b>Demo Guide for Faculty:</b><br/>
         1. Select <i>Kitchen Fire Multi-Event Emergency</i> or <i>Gradual Gas Leak</i>.<br/>
-        2. Click <b>Step</b>, <b>Run 10 Steps</b>, or enable <b>Continuous Auto-Run</b>.<br/>
-        3. Observe live transitions: <b>NORMAL &rarr; WARNING &rarr; CRITICAL &rarr; RECOVERY</b>.<br/>
-        4. Check the <b>Topology</b> tab for the network architecture.
+        2. Advance steps (<b>Run 10 Steps</b> or <b>Continuous Auto-Run</b>).<br/>
+        3. Switch to <b>🚨 Incident Monitoring & Alerts</b> tab to view detected incidents & emergency alerts.<br/>
+        4. Click <b>Acknowledge</b> as an operator to update incident state.<br/>
+        5. Observe recovery to normal and status clearing.
     </div>
     """,
     unsafe_allow_html=True,
@@ -175,8 +177,9 @@ render_sensor_cards(
 st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
 
 # Main Tabbed Presentation
-tab_telemetry, tab_topology, tab_stream, tab_arch = st.tabs([
+tab_telemetry, tab_incident, tab_topology, tab_stream, tab_arch = st.tabs([
     "📊 Live Telemetry & Inventory",
+    "🚨 Incident Monitoring & Alerts",
     "🌐 IoT Network Topology",
     "📜 Telemetry Stream & Events",
     "ℹ️ System Architecture & Roadmaps",
@@ -199,6 +202,12 @@ with tab_telemetry:
 
     time_series_df = manager.get_time_series_df()
     render_preview_charts(time_series_df, sensor_configs=manager.get_sensor_configs())
+
+# ------------------------------------------------------------------------------
+# Tab 2: Incident Monitoring & Alerts (Phase 3)
+# ------------------------------------------------------------------------------
+with tab_incident:
+    render_incident_monitoring_tab(manager)
 
 # ------------------------------------------------------------------------------
 # Tab 2: IoT Network Topology
@@ -261,7 +270,7 @@ with tab_arch:
             ("Module 1", "Project Setup & Architecture", "Complete (Phase 0)", True),
             ("Module 2", "Virtual Sensor Engine & Scenarios", "Complete (Phase 1)", True),
             ("Module 3", "System Overview & IoT Topology", "Complete (Phase 2)", True),
-            ("Module 4", "Sensor Monitoring & Incident Detection", "Planned (Phase 3/4)", False),
+            ("Module 4", "Sensor Monitoring & Incident Detection", "Complete (Phase 3)", True),
             ("Module 5", "MQTT Alert Transmission & Delivery Verification", "Planned (Phase 5)", False),
             ("Module 6", "Six-Policy Comparative Analysis", "Planned (Phase 6)", False),
             ("Module 7", "DQN Architecture & Training", "Planned (Phase 7)", False),

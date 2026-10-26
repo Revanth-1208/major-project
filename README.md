@@ -38,7 +38,7 @@ The system is partitioned into twelve distinct modules:
 1. **Module 1: Project Setup & Architecture** (`rl_ack/config.py`, `rl_ack/common/`, `pyproject.toml`) — *Verified*
 2. **Module 2: Virtual Sensor Engine** (`rl_ack/sensors/`) — *Implemented (Phase 1)*
 3. **Module 3: System Overview and IoT Topology** (`rl_ack/topology/`, `rl_ack/dashboard/`, `app.py`) — *Implemented (Phase 2)*
-4. **Module 4: Sensor Monitoring and Incident Detection** (`rl_ack/monitoring/`) — *Subsequent Phase*
+4. **Module 4: Sensor Monitoring and Incident Detection** (`rl_ack/monitoring/`) — *Implemented (Phase 3)*
 5. **Module 5: MQTT Alert Transmission and Delivery Verification** (`rl_ack/mqtt/`) — *Subsequent Phase*
 6. **Module 6: Six-Policy Comparative Analysis** (`rl_ack/policies/`) — *Subsequent Phase*
 7. **Module 7: DQN Architecture and Training** (`rl_ack/dqn/`) — *Subsequent Phase*
@@ -148,6 +148,113 @@ Phase 2 builds an interactive user interface (via Streamlit and Plotly) directly
 
 ---
 
+## Phase 3: Incident Monitoring, Emergency Detection and Alert Management
+
+Phase 3 implements rule-based threshold evaluation, independent emergency detection, a multi-state incident lifecycle, and an interactive operator alert-management dashboard.
+
+### 1. Incident Detection Architecture
+
+```mermaid
+flowchart LR
+    A["Virtual Sensor Engine (Module 2)"] --> B["Reading Status Classifier (Hysteresis)"]
+    B --> C["Incident Detector (Module 4)"]
+    C --> D["Incident & Alert Manager"]
+    D --> E["Streamlit Incident Monitoring Dashboard (Phase 3 UI)"]
+    D -.-> F["MQTT Publisher (Phase 5 Deferred)"]
+```
+
+> [!IMPORTANT]
+> **Safety Guarantee & Decoupling**: Incident detection and emergency alert generation operate completely independently of the DQN agent and MQTT transport. Emergency alerts are generated strictly via authoritative configured sensor thresholds and hysteresis rules without requiring agent learning.
+
+### 2. Configurable Incident Rules and Thresholds
+
+Authoritative threshold parameters are configured per sensor and evaluated with directional hysteresis to prevent state chattering:
+
+| Sensor ID | Sensor Type | Incident Type | Warning Threshold | Critical Threshold | Clearing Hysteresis | Direction |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `GAS-001` | Gas | `gas_leak` | $> 100.0\text{ ppm}$ | $\ge 400.0\text{ ppm}$ | $5.0\text{ ppm}$ | High danger |
+| `TEMP-001` | Temperature | `high_temperature` | $> 38.0^\circ\text{C}$ | $\ge 55.0^\circ\text{C}$ | $1.0^\circ\text{C}$ | High danger |
+| `HUM-001` | Humidity | `humidity_anomaly` | $< 30.0\%$ or $> 70.0\%$ | $\le 15.0\%$ or $\ge 85.0\%$ | $2.0\%$ | Two-sided |
+| `SMOKE-001` | Smoke | `smoke_combustion` | $\ge 1.0\%\text{ obs/m}$ | $\ge 3.5\%\text{ obs/m}$ | $0.1\%\text{ obs/m}$ | High danger |
+
+- **Two-Sided Humidity Limits**: Explicitly distinguishes between dry air (`low_humidity_anomaly`) and steam surge (`high_humidity_anomaly`).
+
+### 3. Incident Lifecycle
+
+Incidents transition through a strict, deterministic state machine:
+
+```mermaid
+stateDiagram-v2
+    [*] --> ACTIVE: Threshold Exceeded (Warning or Critical)
+    ACTIVE --> ACTIVE: Subsequent Samples (Metadata Updated, No Duplicates)
+    ACTIVE --> ACTIVE: Severity Escalation (WARNING -> CRITICAL Alert)
+    ACTIVE --> ACKNOWLEDGED: Operator Acknowledgement
+    ACTIVE --> RECOVERED: Sensor Value Clears Below Hysteresis
+    ACKNOWLEDGED --> RECOVERED: Sensor Value Clears Below Hysteresis
+    ACKNOWLEDGED --> CLOSED: Operator Manual Close
+    RECOVERED --> CLOSED: Operator Manual Close
+    CLOSED --> [*]
+```
+
+- **Valid Transitions**:
+  - `ACTIVE` $\rightarrow$ `ACKNOWLEDGED`
+  - `ACTIVE` $\rightarrow$ `RECOVERED`
+  - `ACKNOWLEDGED` $\rightarrow$ `RECOVERED`
+  - `ACKNOWLEDGED` $\rightarrow$ `CLOSED`
+  - `RECOVERED` $\rightarrow$ `CLOSED`
+- **Rejection of Invalid Transitions**: Attempts to perform invalid transitions (e.g. closing an unacknowledged active incident, transitioning from `CLOSED`) raise `InvalidStateTransitionError`.
+
+### 4. Alert Message Contract & Priority Mapping
+
+Each alert is an immutable-style record containing:
+- `alert_id`: Unique identifier (`ALT-0001`, `ALT-0002`).
+- `incident_id`: Associated incident tracking identifier (`INC-0001`).
+- `sensor_id`: Emitting virtual sensor (`GAS-001`).
+- `incident_type`: Semantic classification (`gas_leak`, `high_temperature`, etc.).
+- `severity`: `AlertSeverity.WARNING`, `AlertSeverity.CRITICAL`, or `AlertSeverity.INFO`.
+- `reading_value` & `threshold_value`: Exact numeric measurement and trigger limit.
+- `simulation_time_s`: Elapsed monotonic simulation timestamp.
+- `created_at_utc`: ISO 8601 UTC audit timestamp.
+- `priority`: Application traffic priority for subsequent MQTT QoS mapping:
+  - Critical emergency alert: `TrafficClass.CRITICAL_CONTROL`
+  - Warning alert: `TrafficClass.HIGH_BANDWIDTH_STREAMING`
+  - Recovery notification: `TrafficClass.BEST_EFFORT`
+
+### 5. Duplicate Prevention & Escalation Rules
+
+- **Sample Deduplication**: Consecutive abnormal readings for the same active incident update `last_reading` and `last_updated_time_s` without emitting redundant alerts.
+- **Rerun Idempotency**: Readings are indexed by `(sensor_id, sequence_number)` so Streamlit UI reruns never duplicate alerts.
+- **Severity Escalation**: If an active `WARNING` incident receives a `CRITICAL` reading, incident severity escalates to `CRITICAL` and an `ESCALATION` alert is generated.
+- **Recovery Notification**: When conditions return to normal (falling below the hysteresis boundary), the incident enters `RECOVERED` and an informational recovery alert is dispatched.
+- **Condition Recurrence**: If the condition clears and subsequently reoccurs, a brand new incident is created with a new monotonic ID (`INC-0002`).
+
+### 6. Deterministic Emergency Demonstration Guide
+
+To demonstrate the full incident detection and alert lifecycle to faculty:
+
+1. **Step 1 — Baseline Normal**:
+   - Set scenario to **Normal Operation**.
+   - Observe `🚨 Active Incidents: 0` and empty state message: *"No active incidents. Monitoring simulated sensor readings."*
+2. **Step 2 — Trigger Gas Leak Incident**:
+   - Select scenario **Gradual Gas Leak** (Seed: `42`).
+   - Click **Run 10 Steps**.
+   - At $t=7.0\text{s}$, gas concentration crosses $100\text{ ppm}$ $\rightarrow$ incident `INC-0001` triggers in `ACTIVE` state at `WARNING` severity; alert `ALT-0001` is emitted.
+3. **Step 3 — Severity Escalation**:
+   - Advance another 5 steps ($t=12.0\text{s}$). Gas crosses $400\text{ ppm}$ $\rightarrow$ incident `INC-0001` escalates to `CRITICAL`; escalation alert `ALT-0002` is emitted.
+4. **Step 4 — Operator Acknowledgement**:
+   - Switch to the **🚨 Incident Monitoring & Alerts** tab.
+   - Select `INC-0001` in the Operator Actions panel and click **✅ Acknowledge**.
+   - Notice state updates to `ACKNOWLEDGED`, recording operator acknowledgement timestamp.
+5. **Step 5 — Automatic Recovery**:
+   - Advance steps further ($t > 16.0\text{s}$). As the simulated gas leak event expires, concentration reverts toward baseline $50\text{ ppm}$.
+   - Once below $95.0\text{ ppm}$ ($100 - 5\text{ hysteresis}$), incident transitions to `RECOVERED`; recovery alert `ALT-0003` is emitted.
+6. **Step 6 — Incident Closure**:
+   - Click **🔒 Close** to transition the recovered incident to terminal state `CLOSED`.
+
+---
+
+---
+
 ## DQN Architecture & Policies (Summary)
 
 ### State Vector (8 Features)
@@ -224,7 +331,10 @@ d:\Maj_2
 │       │   ├── __init__.py
 │       │   ├── components.py  # Modular UI presentation widgets
 │       │   └── state.py       # Simulation manager and state encapsulation
-│       ├── monitoring/        # Module 4: Incident Detection (Planned Phase 3/4)
+│       ├── monitoring/        # Module 4: Incident Detection & Alerts (Implemented Phase 3)
+│       │   ├── __init__.py
+│       │   ├── detector.py    # Rule-based threshold detector
+│       │   └── manager.py     # Incident lifecycle, deduplication & escalation manager
 │       ├── mqtt/              # Module 5: MQTT Communication & Verification (Planned Phase 5)
 │       ├── policies/          # Module 6: Six ACK Policies (Planned Phase 6)
 │       ├── dqn/               # Module 7: Neural Network & Replay Buffer (Planned Phase 7)
@@ -238,23 +348,24 @@ d:\Maj_2
     ├── test_cli.py
     ├── test_config.py
     ├── test_dashboard_state.py           # Phase 2 Dashboard state tests
+    ├── test_incident_monitoring.py       # Phase 3 Incident & Alert Management tests (18 tests)
     ├── test_module_boundaries.py         # Boundary validation for Modules 1-12
     ├── test_sensor_scenarios_and_status.py # Scenario & hysteresis tests
     ├── test_topology.py                  # Phase 2 IoT Topology unit tests
     ├── test_types_and_contracts.py       # Domain contracts and serialization tests
-    └── test_virtual_sensors.py           # Phase 1 & 2 Test suite (84 total tests)
+    └── test_virtual_sensors.py           # Virtual sensor engine test suite
 ```
 
 ---
 
 ## Execution Commands
 
-### 1. Launch the Streamlit Dashboard (Phase 2 UI)
+### 1. Launch the Streamlit Dashboard (Phase 3 UI)
 ```powershell
 streamlit run app.py
 ```
 
-### 2. Run the Full Automated Pytest Suite (84 Tests)
+### 2. Run the Full Automated Pytest Suite (102 Tests)
 ```powershell
 python -m pytest tests/
 ```
@@ -271,19 +382,17 @@ python main.py
 
 ---
 
-## Phase 2 Scope Boundaries & Subsystems Status
+## Phase 3 Scope Boundaries & Subsystems Status
 
-In strict adherence to Phase 2 scope:
+In strict adherence to Phase 3 scope:
 - **Implemented Subsystems**:
-  - Central Streamlit dashboard (`app.py`).
-  - Simulation state manager (`DashboardSimulationManager`).
-  - IoT Network Topology model and interactive Plotly visualization (`KitchenIoTTopology`).
-  - Dynamic KPI cards and status badges.
-  - Sensor inventory table.
-  - Live time-series telemetry preview charts.
-  - Bounded recent telemetry stream buffer and active scenario events log.
+  - Independent rule-based incident detection (`IncidentDetector`).
+  - Full incident lifecycle management (`IncidentManager`: `ACTIVE` $\rightarrow$ `ACKNOWLEDGED` $\rightarrow$ `RECOVERED` $\rightarrow$ `CLOSED`).
+  - Consecutive sample deduplication, rerun idempotency, and severity escalation (`WARNING` $\rightarrow$ `CRITICAL`).
+  - Hysteresis clearing verification and informational recovery alerts.
+  - Interactive operator acknowledgement in the Streamlit UI with wall-clock and simulation timestamps.
+  - Interactive Incident Monitoring tab in the dashboard with live summary KPIs, active incidents table, and bounded alert history.
 - **Subsystems Intentionally Deferred to Future Phases**:
-  - **No MQTT Publishing**: Mosquitto broker integration and real network transport will be implemented in Phase 5.
-  - **No Incident Detection / Alert Transmission**: Formal alert dispatch over MQTT topics will be implemented in Phases 4 & 5.
-  - **No DQN Training or Inference**: Neural network policies and RL-ACK controller will be implemented in Phases 7 & 8.
-  - **No SQLite Persistence**: Experiment runs and telemetry database logging will be implemented in Phase 10.
+  - **No MQTT Publishing**: Mosquitto broker setup, topic publishing, subscriber receipt verification, and network delivery verification will be implemented in Phase 5. Alerts are recorded and tracked locally only.
+  - **No DQN Training or Adaptive ACK Decisions**: The DQN neural network, action selection, and ACK policy comparisons belong to Phases 6, 7 & 8.
+  - **No SQLite Persistence**: Experiment runs and database persistence belong to Phase 10.

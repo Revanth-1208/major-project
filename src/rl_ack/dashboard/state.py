@@ -6,6 +6,8 @@ import pandas as pd
 
 from rl_ack.common.enums import NodeOperationalStatus, SensorType
 from rl_ack.common.models import SensorReading
+from rl_ack.monitoring.detector import IncidentDetector
+from rl_ack.monitoring.manager import IncidentManager
 from rl_ack.sensors.sensor_engine import SensorEngine
 from rl_ack.sensors.scenarios import (
     SensorScenario,
@@ -46,6 +48,9 @@ class DashboardSimulationManager:
         self.simulation_status = "Stopped"
 
         self.engine: SensorEngine = SensorEngine.create_default_engine(seed_offset=self.random_seed)
+        self.incident_manager = IncidentManager(
+            detector=IncidentDetector(sensor_configs=self.get_sensor_configs())
+        )
         self.active_scenario: Optional[SensorScenario] = None
         self._history: deque[SensorReading] = deque(maxlen=self.max_history)
         self._applied_event_indices: set[int] = set()
@@ -89,6 +94,8 @@ class DashboardSimulationManager:
         self.engine.reset()
         self._history.clear()
         self._applied_event_indices.clear()
+        self.incident_manager.reset()
+        self.incident_manager.detector.sensor_configs = self.get_sensor_configs()
         self.simulation_status = "Stopped"
 
     @property
@@ -126,6 +133,8 @@ class DashboardSimulationManager:
         new_readings = self.engine.advance(step_dt)
         for r in new_readings:
             self._history.append(r)
+
+        self.incident_manager.process_readings(new_readings)
 
         if self.simulation_status != "Running":
             self.simulation_status = "Paused"
@@ -234,3 +243,64 @@ class DashboardSimulationManager:
         } for r in self._history]
 
         return pd.DataFrame(data)
+
+    def get_incident_kpis(self) -> Dict[str, int]:
+        """Return dynamic incident summary counts directly from IncidentManager."""
+        return self.incident_manager.get_kpis()
+
+    def get_active_incidents_df(self) -> pd.DataFrame:
+        """Return pandas DataFrame of active and acknowledged incidents."""
+        records = []
+        for inc in self.incident_manager.get_active_incidents():
+            records.append({
+                "Incident ID": inc.incident_id,
+                "Sensor ID": inc.sensor_id,
+                "Incident Type": inc.incident_type.replace("_", " ").title(),
+                "Severity": inc.severity.value.upper(),
+                "Latest Value": f"{inc.last_reading:.2f} {inc.unit}",
+                "Trigger Threshold": f"{inc.trigger_threshold:.2f} {inc.unit}",
+                "Start Sim Time": f"{inc.trigger_time_s:.1f}s",
+                "State": inc.state.value.upper(),
+            })
+        if not records:
+            return pd.DataFrame(columns=[
+                "Incident ID", "Sensor ID", "Incident Type", "Severity",
+                "Latest Value", "Trigger Threshold", "Start Sim Time", "State"
+            ])
+        return pd.DataFrame(records)
+
+    def get_alert_history_df(self, limit: int = 50) -> pd.DataFrame:
+        """Return pandas DataFrame of recent alert records (most recent first)."""
+        alerts = self.incident_manager.get_alerts(limit=limit)
+        records = []
+        for a in reversed(alerts):
+            time_str = a.created_at_utc.split("T")[-1][:8] if "T" in a.created_at_utc else a.created_at_utc
+            records.append({
+                "Alert ID": a.alert_id,
+                "Incident ID": a.incident_id or "N/A",
+                "Sensor ID": a.sensor_id,
+                "Severity": a.severity.value.upper(),
+                "Message": a.message,
+                "Sim Time": f"{a.simulation_time_s:.1f}s",
+                "Created (UTC)": time_str,
+                "Status": "Acknowledged" if a.app_ack_at_utc else a.delivery_status.value.capitalize(),
+            })
+        if not records:
+            return pd.DataFrame(columns=[
+                "Alert ID", "Incident ID", "Sensor ID", "Severity",
+                "Message", "Sim Time", "Created (UTC)", "Status"
+            ])
+        return pd.DataFrame(records)
+
+    def acknowledge_incident(self, incident_id: str) -> Any:
+        """Operator action to acknowledge an active incident."""
+        return self.incident_manager.acknowledge_incident(
+            incident_id, simulation_time_s=self.engine.current_simulation_time
+        )
+
+    def close_incident(self, incident_id: str) -> Any:
+        """Operator action to close a recovered or acknowledged incident."""
+        return self.incident_manager.close_incident(
+            incident_id, simulation_time_s=self.engine.current_simulation_time
+        )
+

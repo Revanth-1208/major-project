@@ -34,3 +34,8 @@ class StorageError(RLAckError):
 class SensorSimulationError(RLAckError):
     """Raised when sensor sampling or incident generation fails."""
     pass
+
+
+class InvalidStateTransitionError(RLAckError):
+    """Raised when an illegal incident lifecycle state transition is attempted."""
+    pass

@@ -107,4 +107,6 @@ class IncidentState(str, Enum):
     """Incident tracking lifecycle states."""
     ACTIVE = "active"
     ACKNOWLEDGED = "acknowledged"
+    RECOVERED = "recovered"
+    CLOSED = "closed"
     CLEARED = "cleared"

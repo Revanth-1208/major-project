@@ -17,7 +17,7 @@ from rl_ack.common.interfaces import (
 MODULE_SPECS = [
     ("rl_ack.sensors", 2, "sensors", True),  # Module 2 implemented in Phase 1
     ("rl_ack.topology", 3, "topology", True),  # Module 3 implemented in Phase 2
-    ("rl_ack.monitoring", 4, "monitoring", False),
+    ("rl_ack.monitoring", 4, "monitoring", True),  # Module 4 implemented in Phase 3
     ("rl_ack.mqtt", 5, "mqtt", False),
     ("rl_ack.policies", 6, "policies", False),
     ("rl_ack.dqn", 7, "dqn", False),

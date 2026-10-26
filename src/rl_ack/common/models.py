@@ -109,6 +109,7 @@ class AlertMessage:
     threshold_value: float = 0.0
     unit: str = ""
     incident_type: str = "threshold_violation"
+    message: str = ""
     simulation_time_s: float = 0.0
     created_at_utc: str = ""
     priority: TrafficClass = TrafficClass.CRITICAL_CONTROL
@@ -118,6 +119,7 @@ class AlertMessage:
     broker_ack_at_utc: Optional[str] = None
     received_at_utc: Optional[str] = None
     app_ack_at_utc: Optional[str] = None
+    recovered_at_utc: Optional[str] = None
     retry_count: int = 0
     failure_reason: Optional[str] = None
     chosen_action: Optional[AckAction] = None
@@ -152,6 +154,37 @@ class AlertMessage:
         if not self.created_at_utc:
             self.created_at_utc = datetime.now(timezone.utc).isoformat()
 
+        if not self.message:
+            self.message = (
+                f"{self.sensor_id} {self.incident_type} condition: "
+                f"{self.reading_value:.2f} {self.unit} (threshold: {self.threshold_value:.2f} {self.unit})"
+            )
+
+    @property
+    def value(self) -> float:
+        """Alias for reading_value."""
+        return self.reading_value
+
+    @property
+    def threshold(self) -> float:
+        """Alias for threshold_value."""
+        return self.threshold_value
+
+    @property
+    def created_at(self) -> str:
+        """Alias for created_at_utc."""
+        return self.created_at_utc
+
+    @property
+    def acknowledged_at(self) -> Optional[str]:
+        """Alias for app_ack_at_utc."""
+        return self.app_ack_at_utc
+
+    @property
+    def recovered_at(self) -> Optional[str]:
+        """Alias for recovered_at_utc."""
+        return self.recovered_at_utc
+
     def to_dict(self) -> Dict[str, Any]:
         s_type = self.sensor_type.value if hasattr(self.sensor_type, "value") else str(self.sensor_type or "")
         return {
@@ -159,18 +192,26 @@ class AlertMessage:
             "sensor_id": self.sensor_id,
             "incident_type": self.incident_type,
             "severity": self.severity.value,
+            "message": self.message,
             "reading_value": self.reading_value,
             "threshold_value": self.threshold_value,
+            "value": self.reading_value,
+            "threshold": self.threshold_value,
             "unit": self.unit,
             "simulation_time_s": self.simulation_time_s,
             "created_at_utc": self.created_at_utc,
+            "created_at": self.created_at_utc,
             "priority": self.priority.value,
             "destination_topic": self.destination_topic,
             "delivery_status": self.delivery_status.value,
+            "status": self.delivery_status.value,
             "published_at_utc": self.published_at_utc,
             "broker_ack_at_utc": self.broker_ack_at_utc,
             "received_at_utc": self.received_at_utc,
             "app_ack_at_utc": self.app_ack_at_utc,
+            "acknowledged_at": self.app_ack_at_utc,
+            "recovered_at_utc": self.recovered_at_utc,
+            "recovered_at": self.recovered_at_utc,
             "retry_count": self.retry_count,
             "failure_reason": self.failure_reason,
             "chosen_action": self.chosen_action.value if self.chosen_action is not None else None,
@@ -180,9 +221,13 @@ class AlertMessage:
             "sensor_type": s_type,
             "traffic_class": self.priority.value,
             "timestamp": self.simulation_time_s,
-            "status": self.delivery_status.value,
             "payload": self.payload,
         }
+
+    def to_json(self) -> str:
+        """Serialize alert message to JSON string."""
+        import json
+        return json.dumps(self.to_dict())
 
 
 @dataclass
@@ -198,11 +243,31 @@ class IncidentRecord:
     state: IncidentState = IncidentState.ACTIVE
     severity: AlertSeverity = AlertSeverity.WARNING
     trigger_reading: float = 0.0
+    trigger_threshold: float = 0.0
+    unit: str = ""
     trigger_time_s: float = 0.0
+    created_at_utc: str = ""
     last_reading: float = 0.0
     last_updated_time_s: float = 0.0
-    cleared_time_s: Optional[float] = None
+    acknowledged_time_s: Optional[float] = None
+    acknowledged_at_utc: Optional[str] = None
+    recovered_time_s: Optional[float] = None
+    recovered_at_utc: Optional[str] = None
+    closed_time_s: Optional[float] = None
+    closed_at_utc: Optional[str] = None
     associated_alert_ids: List[str] = field(default_factory=list)
+
+    # Backward-compatibility alias
+    cleared_time_s: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        from datetime import datetime, timezone
+        if not self.created_at_utc:
+            self.created_at_utc = datetime.now(timezone.utc).isoformat()
+        if self.cleared_time_s is not None and self.recovered_time_s is None:
+            self.recovered_time_s = self.cleared_time_s
+        elif self.recovered_time_s is not None and self.cleared_time_s is None:
+            self.cleared_time_s = self.recovered_time_s
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -212,12 +277,26 @@ class IncidentRecord:
             "state": self.state.value,
             "severity": self.severity.value,
             "trigger_reading": self.trigger_reading,
+            "trigger_threshold": self.trigger_threshold,
+            "unit": self.unit,
             "trigger_time_s": self.trigger_time_s,
+            "created_at_utc": self.created_at_utc,
             "last_reading": self.last_reading,
             "last_updated_time_s": self.last_updated_time_s,
-            "cleared_time_s": self.cleared_time_s,
+            "acknowledged_time_s": self.acknowledged_time_s,
+            "acknowledged_at_utc": self.acknowledged_at_utc,
+            "recovered_time_s": self.recovered_time_s if self.recovered_time_s is not None else self.cleared_time_s,
+            "recovered_at_utc": self.recovered_at_utc,
+            "closed_time_s": self.closed_time_s,
+            "closed_at_utc": self.closed_at_utc,
+            "cleared_time_s": self.cleared_time_s if self.cleared_time_s is not None else self.recovered_time_s,
             "associated_alert_ids": self.associated_alert_ids,
         }
+
+    def to_json(self) -> str:
+        """Serialize incident record to JSON string."""
+        import json
+        return json.dumps(self.to_dict())
 
 
 @dataclass

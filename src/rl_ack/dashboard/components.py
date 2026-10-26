@@ -6,7 +6,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from rl_ack.common.enums import NodeOperationalStatus
+from rl_ack.common.enums import AlertSeverity, IncidentState, NodeOperationalStatus
+from rl_ack.common.exceptions import InvalidStateTransitionError
 from rl_ack.topology.models import KitchenIoTTopology
 
 
@@ -28,7 +29,7 @@ def render_header() -> None:
                 📡 RL-ACK: Smart Kitchen IoT Simulation Platform
             </h1>
             <p style="margin: 6px 0 0 0; font-size: 14px; color: #94A3B8;">
-                Phase 2: System Overview, Virtual Sensor Dashboard & Heterogeneous IoT Topology
+                Phase 3: Virtual Sensor Engine, IoT Topology, Incident Detection & Emergency Alert Management
             </p>
         </div>
         """,
@@ -259,3 +260,101 @@ def render_topology_section(topology: KitchenIoTTopology) -> None:
                 f"- **{node.name.splitlines()[0]}** (`{node.node_id}`): "
                 f"{node.description} *[{node.phase_label}]*"
             )
+
+
+def render_incident_monitoring_tab(manager: Any) -> None:
+    """Render Phase 3 Incident Monitoring, Emergency Detection, and Alert Management interface."""
+    st.subheader("🚨 Incident Monitoring & Emergency Alert Center")
+    st.caption(
+        "Real-time rule-based threshold evaluation, dynamic incident lifecycle tracking, "
+        "and duplicate-suppressed alert management."
+    )
+
+    # 1. Incident Summary KPI metrics
+    kpis = manager.get_incident_kpis()
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        st.metric(label="🚨 Active Incidents", value=kpis["active"])
+    with col2:
+        st.metric(label="🔴 Critical Active", value=kpis["critical_active"])
+    with col3:
+        st.metric(label="🟡 Warning Active", value=kpis["warning_active"])
+    with col4:
+        st.metric(label="🔵 Acknowledged", value=kpis["acknowledged"])
+    with col5:
+        st.metric(label="🟢 Recovered / Closed", value=kpis["recovered_closed"])
+
+    st.markdown("---")
+
+    col_active, col_actions = st.columns([2, 1])
+
+    with col_active:
+        st.subheader("⚠️ Active Incidents")
+        active_incidents = manager.incident_manager.get_active_incidents()
+        if not active_incidents:
+            st.info("ℹ️ No active incidents. Monitoring simulated sensor readings.")
+        else:
+            df_active = manager.get_active_incidents_df()
+            st.dataframe(df_active, width="stretch", hide_index=True)
+
+    with col_actions:
+        st.subheader("👤 Operator Actions")
+        if not active_incidents:
+            st.caption("No incidents currently requiring operator intervention.")
+        else:
+            incident_map = {
+                f"{inc.incident_id} | {inc.sensor_id} ({inc.severity.value.upper()})": inc.incident_id
+                for inc in active_incidents
+            }
+            selected_label = st.selectbox(
+                "Select Incident to Manage",
+                options=list(incident_map.keys()),
+                key="operator_incident_select",
+            )
+            selected_inc_id = incident_map[selected_label]
+            selected_inc = manager.incident_manager._all_incidents.get(selected_inc_id)
+
+            if selected_inc:
+                st.caption(
+                    f"**Current State:** `{selected_inc.state.value.upper()}` | "
+                    f"**Trigger Time:** `{selected_inc.trigger_time_s:.1f}s`"
+                )
+
+                col_a1, col_a2 = st.columns(2)
+                with col_a1:
+                    ack_disabled = selected_inc.state != IncidentState.ACTIVE
+                    if st.button("✅ Acknowledge", disabled=ack_disabled, width="stretch"):
+                        try:
+                            manager.acknowledge_incident(selected_inc_id)
+                            st.success(f"Incident {selected_inc_id} acknowledged.")
+                            st.rerun()
+                        except InvalidStateTransitionError as e:
+                            st.error(str(e))
+                with col_a2:
+                    close_disabled = selected_inc.state not in (
+                        IncidentState.ACKNOWLEDGED,
+                        IncidentState.RECOVERED,
+                        IncidentState.CLEARED,
+                    )
+                    if st.button("🔒 Close", disabled=close_disabled, width="stretch"):
+                        try:
+                            manager.close_incident(selected_inc_id)
+                            st.success(f"Incident {selected_inc_id} closed.")
+                            st.rerun()
+                        except InvalidStateTransitionError as e:
+                            st.error(str(e))
+
+        st.caption(
+            "📌 **Decoupling Note:** Operator incident acknowledgement is an application-level "
+            "workflow action within the monitoring dashboard, distinct from MQTT transport PUBACK."
+        )
+
+    st.markdown("---")
+    st.subheader("📜 Emergency Alert History (Bounded Retention)")
+    st.caption(
+        f"Chronological record of generated emergency alerts "
+        f"(Buffer Capacity: {manager.incident_manager.max_alerts})."
+    )
+    df_alerts = manager.get_alert_history_df(limit=50)
+    st.dataframe(df_alerts, width="stretch", hide_index=True, height=260)
+

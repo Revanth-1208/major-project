@@ -21,6 +21,7 @@ def test_dashboard_components_import_and_definitions():
         render_sensor_cards,
         render_preview_charts,
         render_topology_section,
+        render_incident_monitoring_tab,
     )
     assert "NORMAL" in STATUS_BADGES
     assert callable(render_header)
@@ -28,6 +29,7 @@ def test_dashboard_components_import_and_definitions():
     assert callable(render_sensor_cards)
     assert callable(render_preview_charts)
     assert callable(render_topology_section)
+    assert callable(render_incident_monitoring_tab)
 
 
 def test_dashboard_components_render_without_exceptions():
@@ -40,6 +42,7 @@ def test_dashboard_components_render_without_exceptions():
         render_sensor_cards,
         render_preview_charts,
         render_topology_section,
+        render_incident_monitoring_tab,
     )
 
     manager = DashboardSimulationManager(random_seed=42)
@@ -51,9 +54,11 @@ def test_dashboard_components_render_without_exceptions():
     render_sensor_cards(manager.engine.get_sensors(), manager.engine.get_latest_readings())
     render_preview_charts(manager.get_time_series_df(), sensor_configs=manager.get_sensor_configs())
     render_topology_section(topology)
+    render_incident_monitoring_tab(manager)
 
     # Populated state render after steps
     manager.step(1.0)
     render_kpi_cards(manager.get_kpis())
     render_sensor_cards(manager.engine.get_sensors(), manager.engine.get_latest_readings())
     render_preview_charts(manager.get_time_series_df(), sensor_configs=manager.get_sensor_configs())
+    render_incident_monitoring_tab(manager)
