@@ -1,6 +1,6 @@
 """Reusable Streamlit and Plotly UI presentation components for Phase 2."""
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
