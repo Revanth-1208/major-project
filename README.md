@@ -37,7 +37,7 @@ The system is partitioned into twelve distinct modules:
 
 1. **Module 1: Project Setup & Architecture** (`rl_ack/config.py`, `rl_ack/common/`, `pyproject.toml`) — *Verified*
 2. **Module 2: Virtual Sensor Engine** (`rl_ack/sensors/`) — *Implemented (Phase 1)*
-3. **Module 3: System Overview and IoT Topology** (`rl_ack/topology/`) — *Phase 2*
+3. **Module 3: System Overview and IoT Topology** (`rl_ack/topology/`, `rl_ack/dashboard/`, `app.py`) — *Implemented (Phase 2)*
 4. **Module 4: Sensor Monitoring and Incident Detection** (`rl_ack/monitoring/`) — *Subsequent Phase*
 5. **Module 5: MQTT Alert Transmission and Delivery Verification** (`rl_ack/mqtt/`) — *Subsequent Phase*
 6. **Module 6: Six-Policy Comparative Analysis** (`rl_ack/policies/`) — *Subsequent Phase*
@@ -106,6 +106,48 @@ When an event ends, the sensor returns gradually toward its baseline via mean re
 
 ---
 
+## Phase 2: System Overview, Sensor Dashboard & IoT Topology
+
+Phase 2 builds an interactive user interface (via Streamlit and Plotly) directly connected to the Phase 1 Virtual Sensor Engine. It introduces the full Smart Kitchen IoT Network graph, dynamic KPI derivation, sensor cards, inventory tables, and real-time telemetry charting.
+
+### Dashboard Architecture & Features
+
+1. **Simulation Controls & Determinism**:
+   - **Step Button (`▶️ Step`)**: Advances the simulation clock monotonically by $\Delta t$ (e.g. 1.0s).
+   - **Batch Advance (`⏩ Run N Steps`)**: Executes consecutive simulation steps (5, 10, 15, 20 steps) in a single update.
+   - **Reset Button (`🔄 Reset`)**: Clears history buffer, resets sensor engines to $t=0$, and restores baseline conditions.
+   - **Environmental Scenario Selector**: Allows triggering preconfigured scenarios (Normal Operation, Gradual Gas Leak, Abnormal Temperature Rise, Increasing Smoke Obscuration, Steam Anomaly, Dry Air, and Kitchen Fire Multi-Event Emergency).
+   - **Deterministic Random Seed**: Fixed numeric seed ensures identical pseudo-random walks across re-runs.
+
+2. **Derived System KPIs**:
+   - KPIs are computed dynamically from actual sensor state: **Total Sensors (4)**, **Normal Count**, **Warning Count**, **Critical Count**, **Unavailable Count**, **Simulation Time (s)**, and **Active Events**.
+   - No hardcoded numbers or static text.
+
+3. **Individual Sensor Status Cards**:
+   - Distinct cards for `GAS-001`, `TEMP-001`, `HUM-001`, and `SMOKE-001`.
+   - Clear visual status badges:
+     - 🟢 **NORMAL**: Reading is within standard operating limits.
+     - 🟡 **WARNING**: Reading has exceeded warning limit.
+     - 🔴 **CRITICAL**: Reading has crossed critical incident threshold.
+     - ⚪ **UNAVAILABLE**: Sensor is offline or uninitialized.
+   - Displays current reading, unit, sampling interval, sequence number, and last sample time.
+
+4. **Sensor Inventory Table**:
+   - Tabular summary of all configured sensors: Sensor ID, Type, Unit, Current Reading, Warning Limit, Critical Limit, Sampling Interval, Sequence Number, Derived Status, and Host Node ID.
+
+5. **Live Telemetry Preview Charts (Plotly)**:
+   - Real-time line plots of sensor telemetry against simulation time.
+   - Includes horizontal reference lines for Warning and Critical thresholds.
+   - Preserves discrete sampling intervals (1.0s for Gas, Temp, Smoke; 2.0s for Humidity).
+
+6. **Interactive Smart Kitchen IoT Network Topology**:
+   - Graph visualization using Plotly scatter traces without external OS binaries.
+   - Clearly distinguishes between:
+     - 🟢 **Implemented (Phase 1 & 2)**: Sensor Nodes (`NODE-001` .. `NODE-004`), Edge Gateway (`EDGE-GW-01`), Central Dashboard (`DASH-01`), and internal telemetry communication links.
+     - ⚪ **Planned (Subsequent Phases)**: Mosquitto Broker (`BROKER-01`), Adaptive DQN Controller (`DQN-CTRL-01`), and external MQTT channels.
+
+---
+
 ## DQN Architecture & Policies (Summary)
 
 ### State Vector (8 Features)
@@ -142,12 +184,14 @@ $$\text{Input (8)} \longrightarrow \text{Hidden (64, ReLU)} \longrightarrow \tex
 
 ```text
 d:\Maj_2
-├── app.py                     # Streamlit application entrypoint
-├── main.py                    # Top-level CLI launcher
+├── app.py                     # Streamlit application entrypoint (Phase 2)
+├── main.py                    # Top-level CLI launcher & diagnostics
 ├── pyproject.toml             # Packaging and build specifications
 ├── pytest.ini                 # Pytest configuration
 ├── requirements.txt           # Dependency pin specifications
 ├── README.md                  # System overview and usage guide
+├── docs/
+│   └── EMERGENCY_ALERT_ARCHITECTURE.md # Architecture specification for emergency alerts
 ├── scripts/
 │   └── demo_sensors.py        # Phase 1 sensor verification demonstration runner
 ├── src/
@@ -161,60 +205,85 @@ d:\Maj_2
 │       │   ├── exceptions.py
 │       │   ├── interfaces.py
 │       │   └── models.py
-│       ├── sensors/           # Module 2: Virtual Sensor Engine (Implemented)
+│       ├── sensors/           # Module 2: Virtual Sensor Engine (Implemented Phase 1)
 │       │   ├── __init__.py
 │       │   ├── base_sensor.py
 │       │   ├── config.py
 │       │   ├── demo.py
 │       │   ├── gas_sensor.py
 │       │   ├── humidity_sensor.py
+│       │   ├── scenarios.py   # Environmental scenario engine
 │       │   ├── sensor_engine.py
 │       │   ├── smoke_sensor.py
-│       │   └── temperature_sensor.py
-│       ├── topology/          # Module 3: IoT Topology & Nodes (Phase 2)
-│       ├── monitoring/        # Module 4: Incident Detection
-│       ├── mqtt/              # Module 5: MQTT Communication & Verification
-│       ├── policies/          # Module 6: Six ACK Policies
-│       ├── dqn/               # Module 7: Neural Network & Replay Buffer
-│       ├── controller/        # Module 8: DQN Online Controller
-│       ├── simulation/        # Module 9: Simulation Engine
-│       ├── storage/           # Module 10: SQLite Storage
-│       └── analysis/          # Module 11: Export & Visualization
+│       │   ├── temperature_sensor.py
+│       │   └── thresholds.py  # Status classifier with hysteresis
+│       ├── topology/          # Module 3: IoT Topology & Nodes (Implemented Phase 2)
+│       │   ├── __init__.py
+│       │   └── models.py      # Network graph, nodes, edges, Plotly rendering
+│       ├── dashboard/         # UI Presentation Subsystem (Implemented Phase 2)
+│       │   ├── __init__.py
+│       │   ├── components.py  # Modular UI presentation widgets
+│       │   └── state.py       # Simulation manager and state encapsulation
+│       ├── monitoring/        # Module 4: Incident Detection (Planned Phase 3/4)
+│       ├── mqtt/              # Module 5: MQTT Communication & Verification (Planned Phase 5)
+│       ├── policies/          # Module 6: Six ACK Policies (Planned Phase 6)
+│       ├── dqn/               # Module 7: Neural Network & Replay Buffer (Planned Phase 7)
+│       ├── controller/        # Module 8: DQN Online Controller (Planned Phase 8)
+│       ├── simulation/        # Module 9: Simulation Engine (Planned Phase 9)
+│       ├── storage/           # Module 10: SQLite Storage (Planned Phase 10)
+│       └── analysis/          # Module 11: Export & Visualization (Planned Phase 11)
 └── tests/
     ├── __init__.py
     ├── test_app_entrypoint.py
     ├── test_cli.py
     ├── test_config.py
-    ├── test_module_boundaries.py
-    ├── test_types_and_contracts.py
-    └── test_virtual_sensors.py # Phase 1 Test Suite (51 total tests)
+    ├── test_dashboard_state.py           # Phase 2 Dashboard state tests
+    ├── test_module_boundaries.py         # Boundary validation for Modules 1-12
+    ├── test_sensor_scenarios_and_status.py # Scenario & hysteresis tests
+    ├── test_topology.py                  # Phase 2 IoT Topology unit tests
+    ├── test_types_and_contracts.py       # Domain contracts and serialization tests
+    └── test_virtual_sensors.py           # Phase 1 Sensor suite (74 total tests)
 ```
 
 ---
 
 ## Execution Commands
 
-### 1. Run the Virtual Sensor Verification Demonstration
+### 1. Launch the Streamlit Dashboard (Phase 2 UI)
 ```powershell
-python scripts/demo_sensors.py
+streamlit run app.py
 ```
 
-### 2. Run the Full Automated Test Suite (51 Tests)
+### 2. Run the Full Automated Pytest Suite (74 Tests)
 ```powershell
 python -m pytest tests/
 ```
 
-### 3. Run the Diagnostic CLI Check
+### 3. Run the Virtual Sensor CLI Verification Demo
+```powershell
+python scripts/demo_sensors.py
+```
+
+### 4. Run Diagnostic Stack Check
 ```powershell
 python main.py
 ```
 
 ---
 
-## Phase 1 Limitations
+## Phase 2 Scope Boundaries & Subsystems Status
 
-In strict adherence to Phase 1 scope:
-- **No MQTT Publishing**: Generated sensor readings are kept in memory and passed directly to callers.
-- **No Alert Generation**: Threshold crossings are flagged as metadata only (`is_threshold_exceeded=True`); incident detection and alert generation are reserved for Module 4.
-- **No Topology Graph**: IoT nodes are referenced by metadata strings (`NODE-001` .. `NODE-004`); interactive graph layout will be built in Phase 2.
-- **No SQLite Storage**: Persistence of sensor readings is scheduled for Module 10.
+In strict adherence to Phase 2 scope:
+- **Implemented Subsystems**:
+  - Central Streamlit dashboard (`app.py`).
+  - Simulation state manager (`DashboardSimulationManager`).
+  - IoT Network Topology model and interactive Plotly visualization (`KitchenIoTTopology`).
+  - Dynamic KPI cards and status badges.
+  - Sensor inventory table.
+  - Live time-series telemetry preview charts.
+  - Bounded recent telemetry stream buffer and active scenario events log.
+- **Subsystems Intentionally Deferred to Future Phases**:
+  - **No MQTT Publishing**: Mosquitto broker integration and real network transport will be implemented in Phase 5.
+  - **No Incident Detection / Alert Transmission**: Formal alert dispatch over MQTT topics will be implemented in Phases 4 & 5.
+  - **No DQN Training or Inference**: Neural network policies and RL-ACK controller will be implemented in Phases 7 & 8.
+  - **No SQLite Persistence**: Experiment runs and telemetry database logging will be implemented in Phase 10.

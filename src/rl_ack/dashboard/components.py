@@ -1,0 +1,230 @@
+"""Reusable Streamlit and Plotly UI presentation components for Phase 2."""
+
+from typing import Any, Dict, List
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+
+from rl_ack.common.enums import NodeOperationalStatus
+from rl_ack.topology.models import KitchenIoTTopology
+
+
+STATUS_BADGES = {
+    "NORMAL": ("🟢", "#D1FAE5", "#065F46"),      # Soft green bg, dark green text
+    "WARNING": ("🟡", "#FEF3C7", "#92400E"),     # Soft amber bg, dark amber text
+    "CRITICAL": ("🔴", "#FEE2E2", "#991B1B"),    # Soft red bg, dark red text
+    "UNAVAILABLE": ("⚪", "#F1F5F9", "#475569"), # Soft slate bg, dark slate text
+}
+
+
+def render_header() -> None:
+    """Render application header and faculty demonstration banner."""
+    st.markdown(
+        """
+        <div style="background: linear-gradient(90deg, #1E293B 0%, #0F172A 100%); 
+                    padding: 20px 25px; border-radius: 10px; margin-bottom: 20px; color: white;">
+            <h1 style="margin: 0; font-size: 26px; font-weight: 700; color: #38BDF8;">
+                📡 RL-ACK: Smart Kitchen IoT Simulation Platform
+            </h1>
+            <p style="margin: 6px 0 0 0; font-size: 14px; color: #94A3B8;">
+                Phase 2: System Overview, Virtual Sensor Dashboard & Heterogeneous IoT Topology
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_kpi_cards(kpis: Dict[str, Any]) -> None:
+    """Render top-level KPI cards derived dynamically from engine state."""
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
+
+    with col1:
+        st.metric(
+            label="⏱️ Simulation Time",
+            value=f"{kpis['simulation_time_s']:.1f} s",
+            delta=kpis["simulation_status"],
+            delta_color="normal" if kpis["simulation_status"] == "Running" else "off",
+        )
+
+    with col2:
+        st.metric(
+            label="📦 Total Sensors",
+            value=kpis["total_sensors"],
+        )
+
+    with col3:
+        st.metric(
+            label="🟢 Normal State",
+            value=kpis["normal_count"],
+        )
+
+    with col4:
+        st.metric(
+            label="🟡 Warning State",
+            value=kpis["warning_count"],
+        )
+
+    with col5:
+        st.metric(
+            label="🔴 Critical State",
+            value=kpis["critical_count"],
+        )
+
+    with col6:
+        st.metric(
+            label="⚡ Active Events",
+            value=kpis["active_events_count"],
+        )
+
+
+def render_sensor_cards(engine_sensors: List[Any], latest_readings: Dict[str, Any]) -> None:
+    """Render individual cards for GAS-001, TEMP-001, HUM-001, SMOKE-001."""
+    cols = st.columns(4)
+
+    for idx, sensor in enumerate(engine_sensors):
+        target_col = cols[idx % 4]
+        reading = latest_readings.get(sensor.sensor_id)
+        val_str = f"{reading.value:.2f}" if reading else f"{sensor.current_value:.2f}"
+        seq_str = str(reading.sequence_number) if reading else str(sensor.sequence_number)
+        time_str = f"{reading.simulation_time_s:.1f} s" if reading else "0.0 s"
+        status_key = sensor.status.value.upper()
+
+        icon, bg_color, text_color = STATUS_BADGES.get(status_key, STATUS_BADGES["NORMAL"])
+
+        with target_col:
+            st.markdown(
+                f"""
+                <div style="border: 1px solid #E2E8F0; border-radius: 8px; padding: 14px; 
+                            background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-weight: 700; font-size: 15px; color: #1E293B;">{sensor.sensor_id}</span>
+                        <span style="background: {bg_color}; color: {text_color}; font-size: 11px; font-weight: 700; 
+                                     padding: 3px 8px; border-radius: 9999px;">
+                            {icon} {status_key}
+                        </span>
+                    </div>
+                    <div style="margin: 10px 0;">
+                        <span style="font-size: 26px; font-weight: 800; color: #0F172A;">{val_str}</span>
+                        <span style="font-size: 14px; font-weight: 600; color: #64748B; margin-left: 4px;">{sensor.unit}</span>
+                    </div>
+                    <hr style="margin: 8px 0; border: none; border-top: 1px solid #F1F5F9;" />
+                    <div style="font-size: 11px; color: #64748B; line-height: 1.6;">
+                        <div><b>Type:</b> {sensor.sensor_type.value.capitalize()}</div>
+                        <div><b>Sampling Interval:</b> {sensor.sampling_interval_s:.1f} s</div>
+                        <div><b>Last Sample Time:</b> {time_str}</div>
+                        <div><b>Sequence #:</b> {seq_str}</div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
+def render_preview_charts(time_series_df: pd.DataFrame) -> None:
+    """Render multi-panel time-series plots showing real sensor data against simulation time."""
+    if time_series_df.empty:
+        st.info("ℹ️ Telemetry charts will populate as the simulation clock advances.")
+        return
+
+    col1, col2 = st.columns(2)
+
+    # 1. Gas concentration (ppm)
+    gas_df = time_series_df[time_series_df["sensor_id"] == "GAS-001"]
+    with col1:
+        fig_gas = px.line(
+            gas_df,
+            x="simulation_time_s",
+            y="value",
+            markers=True,
+            title="GAS-001 Concentration (ppm) vs Simulation Time",
+            labels={"simulation_time_s": "Simulation Time (s)", "value": "ppm"},
+            color_discrete_sequence=["#EF4444"],
+        )
+        fig_gas.add_hline(y=100.0, line_dash="dash", line_color="#F59E0B", annotation_text="Warning (100 ppm)")
+        fig_gas.add_hline(y=400.0, line_dash="dash", line_color="#DC2626", annotation_text="Critical (400 ppm)")
+        fig_gas.update_layout(height=280, margin=dict(l=20, r=20, t=40, b=20))
+        st.plotly_chart(fig_gas, use_container_width=True)
+
+    # 2. Temperature (°C)
+    temp_df = time_series_df[time_series_df["sensor_id"] == "TEMP-001"]
+    with col2:
+        fig_temp = px.line(
+            temp_df,
+            x="simulation_time_s",
+            y="value",
+            markers=True,
+            title="TEMP-001 Temperature (°C) vs Simulation Time",
+            labels={"simulation_time_s": "Simulation Time (s)", "value": "°C"},
+            color_discrete_sequence=["#F97316"],
+        )
+        fig_temp.add_hline(y=38.0, line_dash="dash", line_color="#F59E0B", annotation_text="Warning (38 °C)")
+        fig_temp.add_hline(y=55.0, line_dash="dash", line_color="#DC2626", annotation_text="Critical (55 °C)")
+        fig_temp.update_layout(height=280, margin=dict(l=20, r=20, t=40, b=20))
+        st.plotly_chart(fig_temp, use_container_width=True)
+
+    col3, col4 = st.columns(2)
+
+    # 3. Relative Humidity (% RH) - Note 2.0s interval
+    hum_df = time_series_df[time_series_df["sensor_id"] == "HUM-001"]
+    with col3:
+        fig_hum = px.line(
+            hum_df,
+            x="simulation_time_s",
+            y="value",
+            markers=True,
+            title="HUM-001 Relative Humidity (% RH) vs Simulation Time (2s Interval)",
+            labels={"simulation_time_s": "Simulation Time (s)", "value": "% RH"},
+            color_discrete_sequence=["#06B6D4"],
+        )
+        fig_hum.add_hrect(y0=30.0, y1=70.0, line_width=0, fillcolor="#10B981", opacity=0.1, annotation_text="Normal Range")
+        fig_hum.update_layout(height=280, margin=dict(l=20, r=20, t=40, b=20))
+        st.plotly_chart(fig_hum, use_container_width=True)
+
+    # 4. Smoke Obscuration (% obs/m)
+    smoke_df = time_series_df[time_series_df["sensor_id"] == "SMOKE-001"]
+    with col4:
+        fig_smoke = px.line(
+            smoke_df,
+            x="simulation_time_s",
+            y="value",
+            markers=True,
+            title="SMOKE-001 Optical Obscuration (% obs/m) vs Simulation Time",
+            labels={"simulation_time_s": "Simulation Time (s)", "value": "% obs/m"},
+            color_discrete_sequence=["#64748B"],
+        )
+        fig_smoke.add_hline(y=1.0, line_dash="dash", line_color="#F59E0B", annotation_text="Warning (1.0)")
+        fig_smoke.add_hline(y=3.5, line_dash="dash", line_color="#DC2626", annotation_text="Critical (3.5)")
+        fig_smoke.update_layout(height=280, margin=dict(l=20, r=20, t=40, b=20))
+        st.plotly_chart(fig_smoke, use_container_width=True)
+
+
+def render_topology_section(topology: KitchenIoTTopology) -> None:
+    """Render interactive network topology graph and component readiness breakdown."""
+    st.subheader("🌐 Heterogeneous Smart Kitchen IoT Topology")
+    st.caption("Visualizing communication paths from virtual sensors to edge gateway and upstream cloud entities.")
+
+    fig = topology.to_plotly_figure()
+    st.plotly_chart(fig, use_container_width=True)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("#### 🟢 Operational Components (Phase 1 & 2)")
+        impl_nodes = topology.get_implemented_nodes()
+        for node in impl_nodes:
+            sensors_tag = f" — *Sensors: {', '.join(node.associated_sensors)}*" if node.associated_sensors else ""
+            st.markdown(
+                f"- **{node.name.splitlines()[0]}** (`{node.node_id}`): "
+                f"{node.description}{sensors_tag}"
+            )
+
+    with col2:
+        st.markdown("#### ⚪ Planned Subsystems (Subsequent Phases)")
+        plan_nodes = topology.get_planned_nodes()
+        for node in plan_nodes:
+            st.markdown(
+                f"- **{node.name.splitlines()[0]}** (`{node.node_id}`): "
+                f"{node.description} *[{node.phase_label}]*"
+            )

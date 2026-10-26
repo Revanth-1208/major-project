@@ -102,6 +102,24 @@ class SensorEngine(ISensorEngine):
         else:
             sensor.set_incident(False)
 
+    def get_active_events(self) -> Dict[str, Dict[str, Any]]:
+        """Return details of all currently active environmental events across sensors."""
+        events: Dict[str, Dict[str, Any]] = {}
+        for s_id, sensor in self._sensors.items():
+            if getattr(sensor, "is_event_active", False):
+                events[s_id] = {
+                    "sensor_id": s_id,
+                    "target_value": getattr(sensor, "_event_target", None),
+                    "start_time_s": getattr(sensor, "_event_start_time", None),
+                    "duration_s": getattr(sensor, "_event_duration_s", None),
+                }
+        return events
+
+    @property
+    def active_event_count(self) -> int:
+        """Count of currently active environmental events."""
+        return len(self.get_active_events())
+
     def set_sensor_status(self, sensor_id: str, status: NodeOperationalStatus) -> None:
         """Update operational status for a specific sensor."""
         sensor = self.get_sensor(sensor_id)
