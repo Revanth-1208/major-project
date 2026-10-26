@@ -30,6 +30,7 @@ from rl_ack.dashboard.components import (
     render_incident_monitoring_tab,
     render_mqtt_delivery_tab,
     render_policy_comparison_tab,
+    render_dqn_tab,
 )
 from rl_ack.topology.models import create_smart_kitchen_topology
 
@@ -179,11 +180,12 @@ render_sensor_cards(
 st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
 
 # Main Tabbed Presentation
-tab_telemetry, tab_incident, tab_mqtt, tab_policy, tab_topology, tab_stream, tab_arch = st.tabs([
+tab_telemetry, tab_incident, tab_mqtt, tab_policy, tab_dqn, tab_topology, tab_stream, tab_arch = st.tabs([
     "📊 Live Telemetry & Inventory",
     "🚨 Incident Monitoring & Alerts",
     "📡 MQTT Alert Delivery",
     "⚖️ ACK Policy Comparison",
+    "🧠 DQN Training & Evaluation",
     "🌐 IoT Network Topology",
     "📜 Telemetry Stream & Events",
     "ℹ️ System Architecture & Roadmaps",
@@ -226,7 +228,13 @@ with tab_policy:
     render_policy_comparison_tab(manager)
 
 # ------------------------------------------------------------------------------
-# Tab 5: IoT Network Topology
+# Tab 5: DQN Training & Evaluation (Phase 6)
+# ------------------------------------------------------------------------------
+with tab_dqn:
+    render_dqn_tab(manager)
+
+# ------------------------------------------------------------------------------
+# Tab 6: IoT Network Topology
 # ------------------------------------------------------------------------------
 with tab_topology:
     render_topology_section(topology)
@@ -289,7 +297,7 @@ with tab_arch:
             ("Module 4", "Sensor Monitoring & Incident Detection", "Complete (Phase 3)", True),
             ("Module 5", "MQTT Alert Transmission & Delivery Verification", "Complete (Phase 4)", True),
             ("Module 6", "Fixed ACK Policy Engine & Comparative Evaluation", "Complete (Phase 5)", True),
-            ("Module 7", "DQN Architecture & Training", "Planned (Phase 6)", False),
+            ("Module 7", "DQN Architecture & Training", "Complete (Phase 6)", True),
             ("Module 8", "DQN Controller Integration", "Planned (Phase 7)", False),
             ("Module 9", "Interactive Simulation Runner", "Planned (Phase 8)", False),
             ("Module 10", "Experiment Data Storage (SQLite)", "Planned (Phase 9)", False),

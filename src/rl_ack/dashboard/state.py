@@ -1,15 +1,22 @@
 """Simulation state manager for the RL-ACK Streamlit dashboard."""
 
 from collections import deque
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 import uuid
 import pandas as pd
-
+import time
 from rl_ack.common.enums import AlertSeverity, NodeOperationalStatus, SensorType, TrafficClass
 from rl_ack.common.models import AlertMessage, SensorReading
 from rl_ack.monitoring.detector import IncidentDetector
 from rl_ack.monitoring.manager import IncidentManager
 from rl_ack.mqtt.manager import MqttManager
+from rl_ack.config import DQNConfig
+from rl_ack.dqn.agent import DQNAgent
+from rl_ack.dqn.environment import EnvConfig, SmartKitchenIoTEnv
+from rl_ack.dqn.evaluator import DQNEvaluationReport, DQNEvaluator
+from rl_ack.dqn.reward import RewardConfig
+from rl_ack.dqn.trainer import DQNTrainer, EpisodeMetrics
 from rl_ack.policies.base import PolicyConfig
 from rl_ack.policies.network_model import NetworkModelConfig
 from rl_ack.policies.runner import PolicyExperimentRunner
@@ -62,6 +69,26 @@ class DashboardSimulationManager:
         self.mqtt_qos: int = 1
         self.policy_runner = PolicyExperimentRunner()
         self.workload_generator = WorkloadGenerator(random_seed=self.random_seed)
+
+        # Module 7: DQN Components
+        self.dqn_agent = DQNAgent(random_seed=self.random_seed)
+        self.dqn_env = SmartKitchenIoTEnv(
+            config=EnvConfig(random_seed=self.random_seed),
+            policy_config=self.policy_runner.default_policy_config,
+        )
+        self.dqn_trainer = DQNTrainer(
+            agent=self.dqn_agent,
+            env=self.dqn_env,
+            checkpoint_dir="checkpoints",
+        )
+        self.dqn_evaluator = DQNEvaluator(
+            agent=self.dqn_agent,
+            policy_config=self.policy_runner.default_policy_config,
+        )
+        self.last_dqn_training_history: List[EpisodeMetrics] = []
+        self.last_dqn_eval_report: Optional[DQNEvaluationReport] = None
+        self.is_dqn_training: bool = False
+
         self.active_scenario: Optional[SensorScenario] = None
         self._history: deque[SensorReading] = deque(maxlen=self.max_history)
         self._applied_event_indices: set[int] = set()
@@ -439,6 +466,133 @@ class DashboardSimulationManager:
     def export_policy_results_csv(self) -> str:
         """Return granular results formatted as CSV string."""
         return self.policy_runner.export_results_csv()
+
+    # --------------------------------------------------------------------------
+    # Phase 6: DQN Training & Evaluation Operations
+    # --------------------------------------------------------------------------
+
+    def train_dqn(
+        self,
+        num_episodes: int = 20,
+        steps_per_episode: int = 30,
+        learning_rate: float = 1e-3,
+        gamma: float = 0.95,
+        batch_size: int = 32,
+        memory_capacity: int = 5000,
+        epsilon_start: float = 1.0,
+        epsilon_min: float = 0.05,
+        epsilon_decay: float = 0.995,
+        target_update_interval: int = 20,
+        reward_config: Optional[RewardConfig] = None,
+        progress_callback: Optional[Any] = None,
+    ) -> pd.DataFrame:
+        """Train DQN agent in controlled environment with live metrics."""
+        self.is_dqn_training = True
+        try:
+            # Reconfigure DQN agent hyperparameters
+            self.dqn_agent.config = DQNConfig(
+                state_dim=8,
+                hidden_dim_1=64,
+                hidden_dim_2=32,
+                action_dim=5,
+                learning_rate=learning_rate,
+                gamma=gamma,
+                epsilon_start=epsilon_start,
+                epsilon_min=epsilon_min,
+                epsilon_decay=epsilon_decay,
+                batch_size=batch_size,
+                memory_capacity=memory_capacity,
+                target_update_interval=target_update_interval,
+            )
+            self.dqn_agent.epsilon = epsilon_start
+
+            # Reconfigure optimizer
+            import torch.optim as optim
+            self.dqn_agent.optimizer = optim.Adam(
+                self.dqn_agent.online_net.parameters(),
+                lr=learning_rate,
+            )
+
+            # Reconfigure environment
+            self.dqn_env.config.steps_per_episode = steps_per_episode
+            if reward_config is not None:
+                self.dqn_env.reward_config = reward_config
+                self.dqn_env.reward_calculator.config = reward_config
+
+            # Run training
+            self.dqn_trainer.train(
+                num_episodes=num_episodes,
+                progress_callback=progress_callback,
+                save_checkpoints=True,
+            )
+            self.last_dqn_training_history = list(self.dqn_trainer.history)
+            return self.dqn_trainer.get_history_df()
+        finally:
+            self.is_dqn_training = False
+
+    def get_dqn_training_history_df(self) -> pd.DataFrame:
+        """Return DataFrame of recorded DQN training history."""
+        return self.dqn_trainer.get_history_df()
+
+    def run_dqn_evaluation(
+        self,
+        workload_count: int = 40,
+        seed: int = 42,
+        loss_rate: float = 0.12,
+        latency_ms: float = 20.0,
+        progress_callback: Optional[Any] = None,
+    ) -> pd.DataFrame:
+        """Evaluate trained DQN against Phase 5 baseline policies on identical workloads."""
+        workload_gen = WorkloadGenerator(random_seed=seed)
+        test_workload = workload_gen.generate_workload(count=workload_count)
+
+        net_cfg = NetworkModelConfig(
+            latency_base_ms=latency_ms,
+            packet_loss_rate=loss_rate,
+            ack_loss_rate=0.05,
+            random_seed=seed,
+        )
+
+        report = self.dqn_evaluator.run_comparative_benchmark(
+            workload=test_workload,
+            network_config=net_cfg,
+            progress_callback=progress_callback,
+        )
+        self.last_dqn_eval_report = report
+        return report.to_summary_df()
+
+    def get_dqn_evaluation_summary_df(self) -> pd.DataFrame:
+        """Return DataFrame of latest comparative evaluation benchmark."""
+        if self.last_dqn_eval_report is None:
+            return pd.DataFrame()
+        return self.last_dqn_eval_report.to_summary_df()
+
+    def get_available_checkpoints(self) -> List[str]:
+        """List available saved .pt checkpoint files in the checkpoints directory."""
+        ckpt_dir = Path("checkpoints")
+        if not ckpt_dir.exists():
+            return []
+        return sorted([f.name for f in ckpt_dir.glob("*.pt")])
+
+    def load_dqn_checkpoint(self, filename: str) -> bool:
+        """Load selected checkpoint weights into active DQN agent."""
+        ckpt_path = Path("checkpoints") / filename
+        return self.dqn_agent.load_checkpoint(ckpt_path)
+
+    def export_dqn_training_csv(self) -> str:
+        """Export training history as CSV string."""
+        df = self.get_dqn_training_history_df()
+        if df.empty:
+            return ""
+        return df.to_csv(index=False)
+
+    def export_dqn_evaluation_csv(self) -> str:
+        """Export comparative evaluation summary as CSV string."""
+        df = self.get_dqn_evaluation_summary_df()
+        if df.empty:
+            return ""
+        return df.to_csv(index=False)
+
 
 
 

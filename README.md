@@ -41,8 +41,8 @@ The system is partitioned into twelve distinct modules:
 4. **Module 4: Sensor Monitoring and Incident Detection** (`rl_ack/monitoring/`) — *Implemented (Phase 3)*
 5. **Module 5: MQTT Alert Transmission and Delivery Verification** (`rl_ack/mqtt/`) — *Implemented (Phase 4)*
 6. **Module 6: Fixed ACK Policy Engine & Comparative Evaluation** (`rl_ack/policies/`) — *Implemented (Phase 5)*
-7. **Module 7: DQN Architecture and Training** (`rl_ack/dqn/`) — *Subsequent Phase*
-8. **Module 8: DQN Controller Integration** (`rl_ack/controller/`) — *Subsequent Phase*
+7. **Module 7: DQN Architecture and Training** (`rl_ack/dqn/`) — *Implemented (Phase 6)*
+8. **Module 8: DQN Controller Integration** (`rl_ack/controller/`) — *Subsequent Phase (Phase 7)*
 9. **Module 9: Interactive Simulation Runner** (`rl_ack/simulation/`) — *Subsequent Phase*
 10. **Module 10: Experiment Data Storage** (`rl_ack/storage/`) — *Subsequent Phase*
 11. **Module 11: Performance Analysis and Export** (`rl_ack/analysis/`) — *Subsequent Phase*
@@ -501,49 +501,114 @@ Phase 5 establishes an empirical baseline by implementing and evaluating five fi
 
 ---
 
+## Phase 6: DQN Architecture, Training and Evaluation
+
+Phase 6 implements a real, testable Deep Q-Network (DQN) agent that learns to select among five discrete acknowledgment strategies using an 8-dimensional normalized network state representation in a controlled IoT simulation environment.
+
+### 1. The Eight-Dimensional Normalized State Space
+
+The DQN accepts an 8-feature continuous state vector $\mathbf{s} \in [0.0, 1.0]^8$:
+
+$$\mathbf{s} = \big[\text{net\_util}, \; \text{ack\_rate}, \; \text{queue\_occ}, \; \text{is\_CC}, \; \text{is\_HBS}, \; \text{is\_BET}, \; \text{energy}, \; \text{latency}\big]$$
+
+| Feature Index | Name | Range | Physical Meaning & Units | Cold-Start Initialization |
+| :---: | :--- | :---: | :--- | :--- |
+| **0** | `network_utilization` | $[0.0, 1.0]$ | Estimated channel utilization / saturation fraction | $0.10$ (Nominal baseline) |
+| **1** | `rolling_ack_rate` | $[0.0, 1.0]$ | Success rate of confirmations over rolling window $W=20$ | $1.0$ (Optimistic start) |
+| **2** | `queue_occupancy` | $[0.0, 1.0]$ | Transmit queue saturation relative to max buffer capacity | $0.0$ (Empty queue) |
+| **3** | `is_CC` | $\{0.0, 1.0\}$ | Critical Control (CC) emergency indicator (mutually exclusive) | $1.0$ if CC alert |
+| **4** | `is_HBS` | $\{0.0, 1.0\}$ | High Bandwidth Streaming (HBS) indicator (mutually exclusive) | $1.0$ if HBS stream |
+| **5** | `is_BET` | $\{0.0, 1.0\}$ | Best Effort Traffic (BET) indicator (mutually exclusive) | $1.0$ if BET reading |
+| **6** | `remaining_energy` | $[0.0, 1.0]$ | Remaining normalized battery / power budget | $1.0$ (Full charge) |
+| **7** | `rolling_latency` | $[0.0, 1.0]$ | Rolling latency normalized by $200.0\text{ ms}$ | $0.075$ ($15.0\text{ ms}$ baseline) |
+
+> [!NOTE]
+> The three traffic indicators (`is_CC`, `is_HBS`, `is_BET`) are strictly mutually exclusive ($\text{is\_CC} + \text{is\_HBS} + \text{is\_BET} = 1.0$). Vectors with invalid dimensions, non-finite values (NaN/Inf), or non-exclusive traffic flags are strictly rejected.
+
+### 2. The Five Discrete DQN Actions
+
+The Q-network outputs exactly five Q-values corresponding to the five Phase 5 fixed policies:
+
+| Action Index | Enum Name | Strategy | Corresponding Phase 5 Policy Class | Base Overhead |
+| :---: | :--- | :--- | :--- | :---: |
+| **0** | `MQTT_QOS_0` | Static MQTT QoS 0 | `StaticQos0Policy` | 32 B |
+| **1** | `LOCAL_ACK` | Static Local ACK | `StaticLocalAckPolicy` | 64 B |
+| **2** | `MQTT_QOS_1` | Static MQTT QoS 1 (Retries) | `StaticQos1RetryPolicy` | 96 B |
+| **3** | `LOCAL_ACK_SELECTIVE_RETRANSMIT` | Local ACK + Selective Retry | `LocalAckSelectiveRetryPolicy` | 80 B |
+| **4** | `MQTT_QOS_2` | Static MQTT QoS 2 | `StaticQos2Policy` | 160 B |
+
+### 3. PyTorch Deep Q-Network Architecture
+
+Implemented in PyTorch 2.14 (`rl_ack/dqn/model.py`), CPU execution by default:
+- **Input Layer**: 8 normalized network state features.
+- **Hidden Layer 1**: Fully-connected `Linear(8, 64)` + ReLU activation (Kaiming normal initialization).
+- **Hidden Layer 2**: Fully-connected `Linear(64, 32)` + ReLU activation (Kaiming normal initialization).
+- **Output Layer**: Fully-connected `Linear(32, 5)` producing 5 real-valued Q-values.
+- **Dual Q-Networks**: Online network updated by Adam optimizer ($\alpha = 10^{-3}$) and Target network updated periodically every $C=20$ gradient steps.
+- **Loss Function**: Smooth L1 (Huber) loss with gradient clipping ($\|\mathbf{g}\|_2 \le 10.0$).
+
+### 4. Experience Replay Buffer & Target Optimization
+
+- Circular FIFO memory (`ReplayBuffer`, capacity $N = 10{,}000$).
+- Stores transitions: $(\mathbf{s}, a, r, \mathbf{s}', \text{done})$.
+- Target calculation with terminal-state masking:
+  $$y_i = r_i + (1 - \text{done}_i) \cdot \gamma \cdot \max_{a'} Q_{\text{target}}(\mathbf{s}'_i, a')$$
+- Epsilon-greedy schedule decaying from $\epsilon_{\text{start}} = 1.0$ down to $\epsilon_{\text{min}} = 0.05$ with factor $0.995$.
+
+### 5. Multi-Objective Reward Function
+
+Balancing reliability, latency compliance, packet bloat, and battery depletion:
+- **Delivery Confirmation**: $+10.0$ for confirmed end-to-end receipt ($+25.0$ total for Critical Control alerts).
+- **Delivery Failure**: $-15.0$ penalty ($-40.0$ total for lost Critical Control alerts).
+- **Deadline Compliance**: $+5.0$ bonus if latency $\le$ deadline; $-10.0$ penalty if violated ($-25.0$ for CC).
+- **Latency Scaling**: $-\beta_{\text{lat}} \cdot (\text{latency} / \text{deadline})$.
+- **Communication Overhead**: $-1.0$ per 100 bytes transmitted.
+- **Retransmission Churn**: $-2.0$ per retransmission attempt.
+- **Local ACK Distinction**: Local proxy ACK alone is NEVER credited as end-to-end delivery (`delivery_confirmed=False`).
+
+---
+
 ## Execution Commands
 
-### 1. Launch the Streamlit Dashboard (Phase 5 UI)
+### 1. Launch Streamlit Dashboard (with Phase 6 DQN Tab)
 ```powershell
 streamlit run app.py
 ```
-*Navigate to the **⚖️ ACK Policy Comparison** tab to configure workload parameters, adjust network loss/latency sliders, run comparisons, and export CSV reports.*
+*Navigate to the **🧠 DQN Training & Evaluation** tab to train the agent, monitor live loss/reward curves, inspect action distribution, load saved checkpoints, and benchmark against Phase 5 baselines.*
 
-### 2. Run the Phase 5 Policy Benchmark CLI Demonstration
+### 2. Run the Phase 6 Standalone CLI Training & Benchmark
 ```powershell
-python scripts/demo_policy_comparison.py
+python scripts/demo_dqn_training.py --episodes 15 --steps 30 --eval-samples 40
 ```
+*Trains the DQN agent, saves checkpoints to `checkpoints/dqn_latest.pt`, evaluates the agent greedily alongside all 5 Phase 5 baselines, and outputs CSV reports in `reports/`.*
 
-### 3. Run the Full Automated Pytest Suite (138 Tests)
+### 3. Run the Full Automated Pytest Suite (153 Tests Passing)
 ```powershell
 python -m pytest tests/
 ```
 
-### 4. Run Phase 5 Dedicated Policy Tests
+### 4. Run Dedicated Phase 6 DQN Tests
 ```powershell
-python -m pytest tests/test_ack_policies.py -v
-```
-
-### 5. Run the Live End-to-End MQTT Alert Demonstration
-```powershell
-python scripts/demo_mqtt_alert.py
+python -m pytest tests/test_dqn_framework.py -v
 ```
 
 ---
 
-## Phase 5 Scope Boundaries & Roadmap
+## Phase 6 Scope Boundaries
 
-In strict adherence to Phase 5 scope:
+In strict adherence to Phase 6 scope:
 - **Implemented Subsystems**:
-  - Five distinct, configurable fixed ACK policies adhering to `IAckPolicy` and `BaseAckPolicy`.
-  - Reusable `SimulatedNetworkModel` with deterministic random seed reproducibility.
-  - Standardized `WorkloadGenerator` spanning Critical Control (`CC`), High Bandwidth Streaming (`HBS`), and Best Effort (`BET`).
-  - `PolicyExperimentRunner` orchestrating comparative evaluations across all 5 strategies.
-  - Comprehensive statistical performance metrics: Delivery confirmation rate, Mean/Median/P95 latency, Deadline compliance, and Protocol overhead.
-  - Interactive Streamlit Policy Comparison tab featuring side-by-side KPI tables, Plotly reliability/latency/overhead charts, and CSV download buttons.
-  - Standalone CLI benchmark demonstration script (`scripts/demo_policy_comparison.py`).
-  - Automated test suite covering all policies and channel conditions (138 total project tests passing).
-- **Subsystems Intentionally Deferred to Phase 6**:
-  - **No Deep Q-Network (DQN) Training**: Neural network architecture, Q-learning loss functions, and experience replay buffer belong to Phase 6.
-  - **No Adaptive Action Selection**: Dynamic real-time ACK policy selection by reinforcement learning belongs to Phase 6.
-  - **No SQLite Experiment Persistence**: Database storage integration belongs to subsequent phases.
+  - Full PyTorch Q-network (`QNetwork`) and Target network.
+  - 8-dimensional normalized state space and validation pipeline.
+  - 5-action mapping to Phase 5 policies.
+  - Experience replay buffer (`ReplayBuffer`) with uniform mini-batch sampling.
+  - Multi-objective reward calculator (`RewardCalculator`).
+  - Controlled IoT simulation environment (`SmartKitchenIoTEnv`).
+  - DQNAgent, DQNTrainer, and DQNEvaluator.
+  - Checkpoint manager with atomic file saving and architecture validation.
+  - Streamlit dashboard integration (**🧠 DQN Training & Evaluation** tab).
+  - Standalone CLI benchmark script (`scripts/demo_dqn_training.py`).
+  - 17 dedicated automated tests (153 total tests passing).
+- **Subsystems Strictly Deferred to Phase 7**:
+  - **No Live MQTT Controller Coupling**: The DQN agent is trained and evaluated in the controlled simulation environment. Connecting the learned weights to dynamically select MQTT QoS and headers during live alert publishing belongs to Phase 7.
+  - **No Live Traffic Manipulation**: Live MQTT delivery verification remains isolated to Phase 4 & Phase 5 modes.

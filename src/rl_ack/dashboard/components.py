@@ -748,4 +748,353 @@ def render_policy_comparison_tab(manager: Any) -> None:
         )
 
 
+def render_dqn_tab(manager: Any) -> None:
+    """Render Phase 6 Deep Q-Network Training, Model Checkpointing, and Comparative Evaluation."""
+    st.subheader("🧠 Deep Q-Network (DQN) Training & Comparative Evaluation")
+    st.caption("Train a multi-objective reinforcement learning agent and evaluate its adaptive ACK decisions against Phase 5 baselines.")
+
+    # Architectural Highlights Banner
+    st.markdown(
+        """
+        <div style="background-color: #0F172A; border-left: 4px solid #38BDF8; padding: 12px 18px; border-radius: 6px; margin-bottom: 20px;">
+            <b style="color: #38BDF8;">📐 Phase 6 DQN Architecture Specifications:</b><br/>
+            <span style="color: #94A3B8; font-size: 13px;">
+            • <b>8-Feature State Space:</b> [Network Utilization, Rolling ACK Rate, Queue Occupancy, is_CC, is_HBS, is_BET, Node Energy, Rolling Latency]<br/>
+            • <b>Deep Q-Network:</b> Fully Connected <code>Linear(8, 64) &rarr; ReLU &rarr; Linear(64, 32) &rarr; ReLU &rarr; Linear(32, 5)</code><br/>
+            • <b>5 Discrete Actions:</b> 0: QoS 0 | 1: Local ACK | 2: QoS 1 Retry | 3: Selective Retry | 4: QoS 2<br/>
+            • <b>Multi-Objective Optimization:</b> Huber loss, experience replay buffer, epsilon-greedy decay, and target network synchronization.
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    tab_train, tab_eval, tab_ckpt = st.tabs([
+        "🏋️ Agent Training Loop",
+        "⚖️ Comparative Evaluation vs Baselines",
+        "💾 Checkpoint Manager",
+    ])
+
+    # --------------------------------------------------------------------------
+    # Sub-Tab 1: Training Loop
+    # --------------------------------------------------------------------------
+    with tab_train:
+        st.markdown("##### ⚙️ Hyperparameters & Training Controls")
+
+        col_h1, col_h2, col_h3 = st.columns(3)
+        with col_h1:
+            episodes_val = st.slider("Training Episodes", min_value=3, max_value=60, value=15, step=1)
+            steps_val = st.slider("Steps per Episode", min_value=10, max_value=60, value=30, step=5)
+            seed_val = st.number_input("Deterministic Random Seed", min_value=1, max_value=999999, value=42, step=1)
+        with col_h2:
+            lr_val = st.selectbox("Learning Rate", options=[0.0005, 0.001, 0.002, 0.005], index=1)
+            gamma_val = st.slider("Discount Factor (γ)", min_value=0.80, max_value=0.99, value=0.95, step=0.01)
+            batch_val = st.selectbox("Mini-Batch Size", options=[16, 32, 64], index=1)
+        with col_h3:
+            eps_start = st.slider("Epsilon Start", min_value=0.5, max_value=1.0, value=1.0, step=0.05)
+            eps_min = st.slider("Epsilon Floor", min_value=0.01, max_value=0.20, value=0.05, step=0.01)
+            eps_decay = st.slider("Epsilon Decay / Step", min_value=0.980, max_value=0.999, value=0.995, step=0.001)
+
+        with st.expander("⚖️ Multi-Objective Reward Weights & Penalties", expanded=False):
+            st.caption("Configurable terms balancing reliability, latency compliance, packet bloat, and battery depletion.")
+            r_c1, r_c2, r_c3 = st.columns(3)
+            with r_c1:
+                w_del = st.number_input("Delivery Confirmation Reward", value=10.0, step=1.0)
+                w_cc_bonus = st.number_input("Critical Control (CC) Bonus", value=15.0, step=1.0)
+                w_fail = st.number_input("Delivery Failure Penalty", value=15.0, step=1.0)
+            with r_c2:
+                w_cc_fail = st.number_input("CC Lost Alert Penalty", value=25.0, step=1.0)
+                w_ddl_met = st.number_input("Deadline Compliance Bonus", value=5.0, step=1.0)
+                w_ddl_viol = st.number_input("Deadline Violation Penalty", value=10.0, step=1.0)
+            with r_c3:
+                w_lat = st.number_input("Latency Scale Penalty", value=3.0, step=0.5)
+                w_overhead = st.number_input("Overhead Penalty / 100B", value=1.0, step=0.2)
+                w_retry = st.number_input("Retransmission Churn Penalty", value=2.0, step=0.5)
+
+        # Trigger Training Button
+        btn_disabled = manager.is_dqn_training
+        if st.button("🚀 Start DQN Training Loop", width="stretch", disabled=btn_disabled):
+            from rl_ack.dqn.reward import RewardConfig
+            reward_cfg = RewardConfig(
+                w_delivery_success=w_del,
+                w_cc_delivery_bonus=w_cc_bonus,
+                w_delivery_failure=w_fail,
+                w_cc_failure_penalty=w_cc_fail,
+                w_deadline_met=w_ddl_met,
+                w_deadline_violation=w_ddl_viol,
+                w_latency_scale=w_lat,
+                w_overhead_per_100b=w_overhead,
+                w_retry_penalty=w_retry,
+            )
+
+            progress_bar = st.progress(0.0)
+            status_text = st.empty()
+
+            def update_train_progress(ep: int, total_eps: int, m: Any):
+                pct = ep / total_eps
+                loss_disp = f"{m.avg_loss:.4f}" if m.avg_loss is not None else "N/A"
+                progress_bar.progress(pct)
+                status_text.text(
+                    f"Episode {ep}/{total_eps} | Reward: {m.total_reward:+.1f} | "
+                    f"Delivery: {m.delivery_rate * 100:.1f}% | Loss: {loss_disp} | ε: {m.epsilon:.3f}"
+                )
+
+            manager.train_dqn(
+                num_episodes=episodes_val,
+                steps_per_episode=steps_val,
+                learning_rate=lr_val,
+                gamma=gamma_val,
+                batch_size=batch_val,
+                epsilon_start=eps_start,
+                epsilon_min=eps_min,
+                epsilon_decay=eps_decay,
+                reward_config=reward_cfg,
+                progress_callback=update_train_progress,
+            )
+
+            progress_bar.progress(1.0)
+            status_text.text("✅ Training Complete! Checkpoints saved to checkpoints/dqn_latest.pt and dqn_best.pt")
+            st.rerun()
+
+        # Display Training Metrics & Curves if available
+        df_train = manager.get_dqn_training_history_df()
+        if not df_train.empty:
+            st.markdown("---")
+            st.subheader("📈 Training Performance Curves")
+
+            t_col1, t_col2 = st.columns(2)
+            with t_col1:
+                # Cumulative Episode Reward Curve
+                fig_rew = px.line(
+                    df_train,
+                    x="episode",
+                    y="total_reward",
+                    title="Episode Reward Progression",
+                    markers=True,
+                    labels={"episode": "Episode", "total_reward": "Total Reward"},
+                )
+                fig_rew.update_traces(line_color="#10B981")
+                st.plotly_chart(fig_rew, width="stretch")
+
+            with t_col2:
+                # Bellman Loss Curve
+                fig_loss = px.line(
+                    df_train[df_train["avg_loss"].notnull()],
+                    x="episode",
+                    y="avg_loss",
+                    title="Average Bellman Huber Loss",
+                    markers=True,
+                    labels={"episode": "Episode", "avg_loss": "Huber Loss"},
+                )
+                fig_loss.update_traces(line_color="#F59E0B")
+                st.plotly_chart(fig_loss, width="stretch")
+
+            t_col3, t_col4 = st.columns(2)
+            with t_col3:
+                # Delivery & Deadline Compliance
+                fig_rates = go.Figure()
+                fig_rates.add_trace(go.Scatter(
+                    x=df_train["episode"],
+                    y=df_train["delivery_rate"] * 100.0,
+                    mode="lines+markers",
+                    name="Delivery Rate (%)",
+                    line=dict(color="#38BDF8"),
+                ))
+                fig_rates.add_trace(go.Scatter(
+                    x=df_train["episode"],
+                    y=df_train["cc_delivery_rate"] * 100.0,
+                    mode="lines+markers",
+                    name="CC Emergency Delivery Rate (%)",
+                    line=dict(color="#EF4444", dash="dash"),
+                ))
+                fig_rates.add_trace(go.Scatter(
+                    x=df_train["episode"],
+                    y=df_train["deadline_compliance_rate"] * 100.0,
+                    mode="lines+markers",
+                    name="Deadline Compliance (%)",
+                    line=dict(color="#10B981"),
+                ))
+                fig_rates.update_layout(
+                    title="Reliability & Emergency Deadline Compliance",
+                    xaxis_title="Episode",
+                    yaxis_title="Percentage (%)",
+                    yaxis_range=[0, 105],
+                )
+                st.plotly_chart(fig_rates, width="stretch")
+
+            with t_col4:
+                # Action Selection Distribution per Episode
+                fig_act = go.Figure()
+                fig_act.add_trace(go.Bar(name="0: QoS 0", x=df_train["episode"], y=df_train["action_0_qos0"], marker_color="#94A3B8"))
+                fig_act.add_trace(go.Bar(name="1: Local ACK", x=df_train["episode"], y=df_train["action_1_local_ack"], marker_color="#F59E0B"))
+                fig_act.add_trace(go.Bar(name="2: QoS 1 Retry", x=df_train["episode"], y=df_train["action_2_qos1"], marker_color="#3B82F6"))
+                fig_act.add_trace(go.Bar(name="3: Selective Retry", x=df_train["episode"], y=df_train["action_3_selective"], marker_color="#10B981"))
+                fig_act.add_trace(go.Bar(name="4: QoS 2", x=df_train["episode"], y=df_train["action_4_qos2"], marker_color="#8B5CF6"))
+                fig_act.update_layout(
+                    title="Action Selection Distribution Across Episodes",
+                    xaxis_title="Episode",
+                    yaxis_title="Action Counts",
+                    barmode="stack",
+                )
+                st.plotly_chart(fig_act, width="stretch")
+
+            # Training History Table & CSV Export
+            st.markdown("##### 📜 Recorded Training History Table")
+            st.dataframe(df_train, width="stretch", hide_index=True)
+
+            csv_train = manager.export_dqn_training_csv()
+            st.download_button(
+                label="📄 Download Training Metrics CSV",
+                data=csv_train,
+                file_name="rlack_dqn_training_metrics.csv",
+                mime="text/csv",
+                width="stretch",
+            )
+        else:
+            st.info("💡 **No Training Run Yet:** Configure hyperparameters above and click **🚀 Start DQN Training Loop** to train the agent.")
+
+    # --------------------------------------------------------------------------
+    # Sub-Tab 2: Comparative Evaluation vs Baselines
+    # --------------------------------------------------------------------------
+    with tab_eval:
+        st.markdown("##### ⚖️ Benchmark DQN Agent Against 5 Fixed Policies")
+        st.caption("Evaluates the trained DQN in strictly greedy mode (no exploration) and contrasts it with all 5 Phase 5 baselines under identical channel conditions.")
+
+        e_col1, e_col2, e_col3 = st.columns(3)
+        with e_col1:
+            eval_samples = st.slider("Test Workload Size (Messages)", min_value=15, max_value=80, value=40, step=5)
+        with e_col2:
+            eval_loss = st.slider("Channel Packet Loss Rate", min_value=0.0, max_value=0.30, value=0.12, step=0.02)
+        with e_col3:
+            eval_seed = st.number_input("Evaluation Random Seed", min_value=1, max_value=999999, value=999, step=1)
+
+        if st.button("🚀 Run Comparative Benchmark", width="stretch"):
+            p_bar = st.progress(0.0)
+            s_text = st.empty()
+
+            def update_eval_progress(pct: float, msg: str):
+                p_bar.progress(pct)
+                s_text.text(msg)
+
+            df_eval = manager.run_dqn_evaluation(
+                workload_count=eval_samples,
+                seed=int(eval_seed),
+                loss_rate=eval_loss,
+                latency_ms=20.0,
+                progress_callback=update_eval_progress,
+            )
+
+            p_bar.progress(1.0)
+            s_text.text("✅ Comparative Benchmark Complete!")
+            st.rerun()
+
+        # Display Comparative Benchmark Results if available
+        df_eval_summary = manager.get_dqn_evaluation_summary_df()
+        if not df_eval_summary.empty:
+            st.markdown("---")
+            st.subheader("📊 Comparative Benchmark Summary")
+            st.dataframe(df_eval_summary, width="stretch", hide_index=True)
+
+            # Visual Benchmark Charts
+            b_col1, b_col2 = st.columns(2)
+            with b_col1:
+                fig_comp_rel = go.Figure()
+                pols = df_eval_summary["Policy"].tolist()
+                fig_comp_rel.add_trace(go.Bar(
+                    name="Delivery Confirmed Rate (%)",
+                    x=pols,
+                    y=df_eval_summary["Delivery Confirmed Rate (%)"],
+                    marker_color=["#94A3B8", "#F59E0B", "#3B82F6", "#10B981", "#8B5CF6", "#06B6D4"],
+                ))
+                fig_comp_rel.add_trace(go.Scatter(
+                    name="CC Emergency Delivery Rate (%)",
+                    x=pols,
+                    y=df_eval_summary["CC Delivery Rate (%)"],
+                    mode="lines+markers",
+                    marker=dict(size=10, color="#EF4444"),
+                    line=dict(color="#EF4444", width=3),
+                ))
+                fig_comp_rel.update_layout(
+                    title="Delivery Reliability & Critical Emergency Performance",
+                    yaxis_title="Percentage (%)",
+                    yaxis_range=[0, 105],
+                )
+                st.plotly_chart(fig_comp_rel, width="stretch")
+
+            with b_col2:
+                fig_comp_lat = go.Figure()
+                fig_comp_lat.add_trace(go.Bar(
+                    name="Mean Latency (ms)",
+                    x=pols,
+                    y=df_eval_summary["Mean E2E Latency (ms)"],
+                    marker_color="#38BDF8",
+                ))
+                fig_comp_lat.add_trace(go.Bar(
+                    name="P95 Latency (ms)",
+                    x=pols,
+                    y=df_eval_summary["P95 E2E Latency (ms)"],
+                    marker_color="#F97316",
+                ))
+                fig_comp_lat.update_layout(
+                    title="Mean vs P95 Tail Latency Comparison",
+                    yaxis_title="Milliseconds (ms)",
+                    barmode="group",
+                )
+                st.plotly_chart(fig_comp_lat, width="stretch")
+
+            # Action Distribution Breakdown by Traffic Class for DQN
+            if manager.last_dqn_eval_report and manager.last_dqn_eval_report.dqn_action_distribution_by_class:
+                st.markdown("##### 🎯 Adaptive DQN Action Decisions by Traffic Class")
+                st.caption("Demonstrates how the trained DQN agent differentiates policies based on message priority (CC vs HBS vs BET).")
+
+                dist_data = []
+                for tc, act_counts in manager.last_dqn_eval_report.dqn_action_distribution_by_class.items():
+                    row = {"Traffic Class": tc}
+                    row.update(act_counts)
+                    dist_data.append(row)
+                df_dist = pd.DataFrame(dist_data)
+                st.dataframe(df_dist, width="stretch", hide_index=True)
+
+            csv_eval = manager.export_dqn_evaluation_csv()
+            st.download_button(
+                label="📄 Download Comparative Benchmark CSV",
+                data=csv_eval,
+                file_name="rlack_dqn_comparative_benchmark.csv",
+                mime="text/csv",
+                width="stretch",
+            )
+        else:
+            st.info("💡 **No Benchmark Run Yet:** Click **🚀 Run Comparative Benchmark** above to evaluate DQN alongside Phase 5 baselines.")
+
+    # --------------------------------------------------------------------------
+    # Sub-Tab 3: Checkpoint Manager
+    # --------------------------------------------------------------------------
+    with tab_ckpt:
+        st.markdown("##### 💾 Checkpoint Repository & Model Weights")
+        available_ckpts = manager.get_available_checkpoints()
+
+        if available_ckpts:
+            col_ck1, col_ck2 = st.columns([2, 1])
+            with col_ck1:
+                selected_ckpt = st.selectbox("Available Checkpoints (.pt)", options=available_ckpts)
+            with col_ck2:
+                if st.button("📥 Load Selected Checkpoint", width="stretch"):
+                    ok = manager.load_dqn_checkpoint(selected_ckpt)
+                    if ok:
+                        st.success(f"✅ Successfully loaded `{selected_ckpt}`! Agent weights and epsilon updated.")
+                    else:
+                        st.error(f"❌ Failed to load `{selected_ckpt}`. Incompatible format or architecture.")
+                    st.rerun()
+
+            st.info(
+                f"**Current Agent Parameters:** Epsilon: `{manager.dqn_agent.epsilon:.4f}` | "
+                f"Trained Episodes: `{manager.dqn_agent.episodes_trained}` | "
+                f"Total Steps: `{manager.dqn_agent.total_steps}` | "
+                f"Device: `{manager.dqn_agent.device}`"
+            )
+        else:
+            st.warning("⚠️ No saved checkpoints found in `checkpoints/`. Train the agent in the '🏋️ Agent Training Loop' tab to create checkpoints.")
+
+
+
 
