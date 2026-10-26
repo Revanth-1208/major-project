@@ -28,6 +28,7 @@ from rl_ack.dashboard.components import (
     render_preview_charts,
     render_topology_section,
     render_incident_monitoring_tab,
+    render_mqtt_delivery_tab,
 )
 from rl_ack.topology.models import create_smart_kitchen_topology
 
@@ -146,11 +147,11 @@ st.sidebar.markdown(
     """
     <div style="font-size: 12px; color: #64748B;">
         <b>Demo Guide for Faculty:</b><br/>
-        1. Select <i>Kitchen Fire Multi-Event Emergency</i> or <i>Gradual Gas Leak</i>.<br/>
-        2. Advance steps (<b>Run 10 Steps</b> or <b>Continuous Auto-Run</b>).<br/>
-        3. Switch to <b>🚨 Incident Monitoring & Alerts</b> tab to view detected incidents & emergency alerts.<br/>
-        4. Click <b>Acknowledge</b> as an operator to update incident state.<br/>
-        5. Observe recovery to normal and status clearing.
+        1. Ensure Mosquitto broker is running (or check connection in MQTT tab).<br/>
+        2. Select <i>Kitchen Fire Multi-Event Emergency</i> or <i>Gradual Gas Leak</i>.<br/>
+        3. Advance steps (<b>Run 10 Steps</b> or <b>Continuous Auto-Run</b>).<br/>
+        4. Switch to <b>🚨 Incident Monitoring</b> to view detected incidents.<br/>
+        5. Switch to <b>📡 MQTT Alert Delivery</b> to observe real-time MQTT publishing, broker PUBACK, subscriber receipt, and application-level delivery confirmation with latency measurements.
     </div>
     """,
     unsafe_allow_html=True,
@@ -177,9 +178,10 @@ render_sensor_cards(
 st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
 
 # Main Tabbed Presentation
-tab_telemetry, tab_incident, tab_topology, tab_stream, tab_arch = st.tabs([
+tab_telemetry, tab_incident, tab_mqtt, tab_topology, tab_stream, tab_arch = st.tabs([
     "📊 Live Telemetry & Inventory",
     "🚨 Incident Monitoring & Alerts",
+    "📡 MQTT Alert Delivery",
     "🌐 IoT Network Topology",
     "📜 Telemetry Stream & Events",
     "ℹ️ System Architecture & Roadmaps",
@@ -208,6 +210,12 @@ with tab_telemetry:
 # ------------------------------------------------------------------------------
 with tab_incident:
     render_incident_monitoring_tab(manager)
+
+# ------------------------------------------------------------------------------
+# Tab 3: MQTT Alert Delivery & Verification (Phase 4)
+# ------------------------------------------------------------------------------
+with tab_mqtt:
+    render_mqtt_delivery_tab(manager)
 
 # ------------------------------------------------------------------------------
 # Tab 2: IoT Network Topology
@@ -271,7 +279,7 @@ with tab_arch:
             ("Module 2", "Virtual Sensor Engine & Scenarios", "Complete (Phase 1)", True),
             ("Module 3", "System Overview & IoT Topology", "Complete (Phase 2)", True),
             ("Module 4", "Sensor Monitoring & Incident Detection", "Complete (Phase 3)", True),
-            ("Module 5", "MQTT Alert Transmission & Delivery Verification", "Planned (Phase 5)", False),
+            ("Module 5", "MQTT Alert Transmission & Delivery Verification", "Complete (Phase 4)", True),
             ("Module 6", "Six-Policy Comparative Analysis", "Planned (Phase 6)", False),
             ("Module 7", "DQN Architecture & Training", "Planned (Phase 7)", False),
             ("Module 8", "DQN Controller Integration", "Planned (Phase 8)", False),

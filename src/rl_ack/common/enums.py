@@ -77,12 +77,17 @@ class DeliveryStatus(str, Enum):
     Never mark an alert as delivered merely because a publication was attempted.
     """
     GENERATED = "generated"
+    CREATED = "created"
+    PUBLISH_PENDING = "publish_pending"
     PUBLISHED = "published"
+    BROKER_ACKNOWLEDGED = "broker_acknowledged"
     RECEIVED = "received"
     ACKNOWLEDGED = "acknowledged"
+    DELIVERY_CONFIRMED = "delivery_confirmed"
     DELIVERED = "delivered"
     FAILED = "failed"
     TIMEOUT = "timeout"
+    TIMED_OUT = "timed_out"
 
 
 class AlertSeverity(str, Enum):

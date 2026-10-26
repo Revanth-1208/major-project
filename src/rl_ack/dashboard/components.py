@@ -29,7 +29,7 @@ def render_header() -> None:
                 📡 RL-ACK: Smart Kitchen IoT Simulation Platform
             </h1>
             <p style="margin: 6px 0 0 0; font-size: 14px; color: #94A3B8;">
-                Phase 3: Virtual Sensor Engine, IoT Topology, Incident Detection & Emergency Alert Management
+                Phase 4: Virtual Sensors, IoT Topology, Incident Detection & MQTT Alert Delivery Verification
             </p>
         </div>
         """,
@@ -357,4 +357,110 @@ def render_incident_monitoring_tab(manager: Any) -> None:
     )
     df_alerts = manager.get_alert_history_df(limit=50)
     st.dataframe(df_alerts, width="stretch", hide_index=True, height=260)
+
+
+def render_mqtt_delivery_tab(manager: Any) -> None:
+    """Render Phase 4 MQTT Integration, Emergency Alert Transmission and Delivery Verification interface."""
+    st.subheader("📡 MQTT Emergency Alert Delivery & Verification Center")
+    st.caption(
+        "Real-time MQTT transport monitoring separating protocol-level broker PUBACK "
+        "from independent subscriber receipts and application delivery confirmations."
+    )
+
+    metrics = manager.get_mqtt_metrics()
+    cfg = manager.mqtt_manager.config
+    pub_connected = manager.mqtt_manager.publisher.is_connected
+    sub_connected = manager.mqtt_manager.subscriber.is_connected
+
+    # Connection Status Banner & Config Controls
+    col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([2, 1, 1])
+
+    with col_ctrl1:
+        st.markdown(f"**Target Broker:** `{cfg.host}:{cfg.port}` | **Alert Topic:** `{cfg.alert_topic}`")
+        st.markdown(f"**Ack Topic:** `{cfg.ack_topic}` | **Clean Session:** `{cfg.clean_session}`")
+
+    with col_ctrl2:
+        new_qos = st.selectbox(
+            "MQTT Alert QoS",
+            options=[0, 1, 2],
+            index=manager.mqtt_qos,
+            key="mqtt_qos_select",
+            help="Select transport protocol QoS level (0: At-most-once, 1: At-least-once, 2: Exactly-once).",
+        )
+        if new_qos != manager.mqtt_qos:
+            manager.set_mqtt_qos(new_qos)
+            st.rerun()
+
+    with col_ctrl3:
+        if not (pub_connected and sub_connected):
+            if st.button("🔌 Connect Clients", width="stretch"):
+                ok = manager.connect_mqtt()
+                if ok:
+                    st.success("Connected to MQTT Broker!")
+                else:
+                    st.error("Could not connect. Is Mosquitto running?")
+                st.rerun()
+        else:
+            if st.button("🛑 Disconnect", width="stretch"):
+                manager.disconnect_mqtt()
+                st.info("Disconnected from MQTT Broker.")
+                st.rerun()
+
+    # Client Status Indicators
+    col_s1, col_s2, col_s3 = st.columns(3)
+    with col_s1:
+        b_color = "🟢" if (pub_connected and sub_connected) else ("🟡" if (pub_connected or sub_connected) else "🔴")
+        st.markdown(f"**Broker Link:** {b_color} `{metrics['broker_status']}`")
+    with col_s2:
+        p_icon = "🟢" if pub_connected else "🔴"
+        st.markdown(f"**Publisher Client:** {p_icon} `{cfg.publisher_client_id}`")
+    with col_s3:
+        s_icon = "🟢" if sub_connected else "🔴"
+        st.markdown(f"**Subscriber Client:** {s_icon} `{cfg.subscriber_client_id}`")
+
+    if not pub_connected:
+        st.warning(
+            "⚠️ **Broker Connection Offline:** Messages will not traverse MQTT until the broker is running. "
+            "To launch Mosquitto locally on Windows: open PowerShell and run: `& 'C:\\Program Files\\mosquitto\\mosquitto.exe' -v`"
+        )
+
+    st.markdown("---")
+
+    # Delivery KPI Metrics
+    col_m1, col_m2, col_m3, col_m4, col_m5, col_m6 = st.columns(6)
+    with col_m1:
+        st.metric(label="📤 Published", value=metrics["total_published"])
+    with col_m2:
+        st.metric(label="⚡ Broker Acked", value=metrics["broker_acknowledged"])
+    with col_m3:
+        st.metric(label="📥 Sub Received", value=metrics["subscriber_received"])
+    with col_m4:
+        st.metric(label="✅ Confirmed", value=metrics["confirmed_deliveries"])
+    with col_m5:
+        st.metric(label="⏳ Pending", value=metrics["pending_receipts"])
+    with col_m6:
+        lat_val = (
+            f"{metrics['avg_e2e_latency_ms']:.1f} ms"
+            if metrics["avg_e2e_latency_ms"] is not None
+            else "—"
+        )
+        st.metric(label="⏱️ Avg E2E Latency", value=lat_val)
+
+    st.markdown("---")
+
+    # Delivery Verification Audit Table
+    st.subheader("📋 Multi-Stage Delivery Verification Log")
+    st.caption("Verifies alert progression through the 5 discrete delivery verification stages.")
+    df_delivery = manager.get_mqtt_delivery_df()
+    st.dataframe(df_delivery, width="stretch", hide_index=True, height=260)
+
+    st.info(
+        "📌 **Verification Pipeline Definition:**\n\n"
+        "1. **GENERATED**: Created by IncidentManager.\n"
+        "2. **PUBLISH_PENDING**: Alert queued for publication over MQTT.\n"
+        "3. **PUBLISHED**: Confirmed at transport layer by MQTT broker (PUBACK for QoS 1/2).\n"
+        "4. **RECEIVED**: Independently received and validated by separate subscriber.\n"
+        "5. **DELIVERY_CONFIRMED**: Application-level receipt ACK returned on `rlack/kitchen/alerts/ack`."
+    )
+
 

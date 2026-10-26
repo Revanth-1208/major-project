@@ -39,3 +39,13 @@ class SensorSimulationError(RLAckError):
 class InvalidStateTransitionError(RLAckError):
     """Raised when an illegal incident lifecycle state transition is attempted."""
     pass
+
+
+class MqttPayloadError(RLAckError):
+    """Raised when an MQTT payload is malformed, missing required fields, or fails schema validation."""
+    pass
+
+
+class DeliveryTimeoutError(RLAckError):
+    """Raised when message delivery verification exceeds configured timeout threshold."""
+    pass

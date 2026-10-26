@@ -39,7 +39,7 @@ The system is partitioned into twelve distinct modules:
 2. **Module 2: Virtual Sensor Engine** (`rl_ack/sensors/`) — *Implemented (Phase 1)*
 3. **Module 3: System Overview and IoT Topology** (`rl_ack/topology/`, `rl_ack/dashboard/`, `app.py`) — *Implemented (Phase 2)*
 4. **Module 4: Sensor Monitoring and Incident Detection** (`rl_ack/monitoring/`) — *Implemented (Phase 3)*
-5. **Module 5: MQTT Alert Transmission and Delivery Verification** (`rl_ack/mqtt/`) — *Subsequent Phase*
+5. **Module 5: MQTT Alert Transmission and Delivery Verification** (`rl_ack/mqtt/`) — *Implemented (Phase 4)*
 6. **Module 6: Six-Policy Comparative Analysis** (`rl_ack/policies/`) — *Subsequent Phase*
 7. **Module 7: DQN Architecture and Training** (`rl_ack/dqn/`) — *Subsequent Phase*
 8. **Module 8: DQN Controller Integration** (`rl_ack/controller/`) — *Subsequent Phase*
@@ -253,6 +253,105 @@ To demonstrate the full incident detection and alert lifecycle to faculty:
 
 ---
 
+## Phase 4: MQTT Integration, Emergency Alert Transmission and Delivery Verification
+
+Phase 4 connects the Phase 3 incident and alert manager to an external Eclipse Mosquitto MQTT broker, implements non-blocking publisher and subscriber components, and enforces multi-stage application-level delivery verification.
+
+### 1. Delivery Pipeline Architecture
+
+```mermaid
+flowchart TD
+    subgraph Edge ["Edge Sensor & Gateway Layer"]
+        A["Virtual Sensors (Phase 1)"] --> B["Incident Detector (Phase 3)"]
+        B --> C["Incident & Alert Manager"]
+        C --> D["MqttAlertPublisher"]
+    end
+
+    subgraph Network ["Network Transport Layer"]
+        D -- "Publish Alert (QoS 0/1/2)" --> E["Mosquitto MQTT Broker (127.0.0.1:1883)"]
+        E -- "Broker PUBACK" --> D
+        E -- "Forward Alert Payload" --> F["MqttAlertSubscriber"]
+        F -- "Application Receipt ACK" --> E
+        E -- "Forward App ACK" --> D
+    end
+
+    subgraph Verification ["Verification & Dashboard Layer"]
+        D --> G["DeliveryTracker (5 Verification Stages)"]
+        G --> H["Streamlit MQTT Delivery Dashboard (Phase 4 UI)"]
+    end
+```
+
+> [!IMPORTANT]
+> **Strict Delivery Verification Rule**: Never mark an alert as delivered merely because a publication was attempted or accepted by the broker. Delivery confirmation requires explicit, bidirectional application-level receipt acknowledgment over network boundaries.
+
+### 2. Multi-Stage Delivery Verification Progression
+
+Every alert progresses through explicit delivery verification stages:
+
+1. **`GENERATED`**: Alert created locally by the IncidentManager.
+2. **`PUBLISH_PENDING`**: Publication initiated and queued by the MQTT publisher client.
+3. **`PUBLISHED`**: Confirmed at the transport protocol layer by the MQTT broker (PUBACK received for QoS 1/2).
+4. **`RECEIVED`**: Independently received, parsed, and validated by the subscriber client over the network.
+5. **`DELIVERY_CONFIRMED`**: Subscriber transmits an application-level receipt ACK on `rlack/kitchen/alerts/ack`, and publisher confirms receipt.
+6. **`TIMED_OUT` / `FAILED`**: Marked if receipt acknowledgment is not received within the configured `receipt_timeout_s` (default 5.0s) or if network errors occur.
+
+### 3. Latency Measurement Definitions
+
+All latency metrics are calculated using real wall-clock timestamps (in milliseconds):
+- **Publication Latency (Broker ACK)**: $t_{\text{broker\_ack}} - t_{\text{publish\_attempt}}$
+- **Subscriber Receipt Latency**: $t_{\text{subscriber\_received}} - t_{\text{publish\_attempt}}$
+- **Application Receipt ACK Latency**: $t_{\text{delivery\_confirmed}} - t_{\text{subscriber\_received}}$
+- **End-to-End Delivery Latency**: $t_{\text{delivery\_confirmed}} - t_{\text{publish\_attempt}}$
+
+### 4. Topic Taxonomy
+
+- **Alert Topic (`rlack/kitchen/alerts`)**: Carries serialized JSON `AlertMessage` payloads for emergency and warning conditions.
+- **Application Receipt Topic (`rlack/kitchen/alerts/ack`)**: Carries application-level delivery confirmations:
+  ```json
+  {
+    "alert_id": "ALT-0001",
+    "incident_id": "INC-0001",
+    "receipt_status": "received",
+    "received_at_utc": "2026-10-26T17:42:10.026900+00:00",
+    "subscriber_id": "rlack_sub_receiver",
+    "is_duplicate": false
+  }
+  ```
+- **Telemetry Topic (`rlack/kitchen/telemetry`)**: Carries routine virtual sensor telemetry at QoS 0, strictly segregated from alert traffic.
+
+### 5. Mosquitto Broker Setup & Verification on Windows
+
+Eclipse Mosquitto (v2.0+) is installed locally.
+
+- **Check Mosquitto Installation**:
+  ```powershell
+  Test-Path 'C:\Program Files\mosquitto\mosquitto.exe'
+  ```
+- **Start Mosquitto Broker (Foreground Verbose)**:
+  ```powershell
+  & 'C:\Program Files\mosquitto\mosquitto.exe' -v
+  ```
+- **Stop Mosquitto Process**:
+  ```powershell
+  Get-Process mosquitto | Stop-Process -Force
+  ```
+
+### 6. Faculty Demonstration Scripts
+
+1. **Run End-to-End Verification Demo**:
+   ```powershell
+   python scripts/demo_mqtt_alert.py
+   ```
+2. **Run Standalone Subscriber in Terminal**:
+   ```powershell
+   python -m rl_ack.mqtt.receiver
+   ```
+3. **Launch the Interactive Dashboard**:
+   ```powershell
+   streamlit run app.py
+   ```
+   Navigate to the **📡 MQTT Alert Delivery** tab to monitor live broker connection state, QoS toggles, delivery KPIs, and the multi-stage delivery verification table.
+
 ---
 
 ## DQN Architecture & Policies (Summary)
@@ -335,13 +434,20 @@ d:\Maj_2
 │       │   ├── __init__.py
 │       │   ├── detector.py    # Rule-based threshold detector
 │       │   └── manager.py     # Incident lifecycle, deduplication & escalation manager
-│       ├── mqtt/              # Module 5: MQTT Communication & Verification (Planned Phase 5)
-│       ├── policies/          # Module 6: Six ACK Policies (Planned Phase 6)
-│       ├── dqn/               # Module 7: Neural Network & Replay Buffer (Planned Phase 7)
-│       ├── controller/        # Module 8: DQN Online Controller (Planned Phase 8)
-│       ├── simulation/        # Module 9: Simulation Engine (Planned Phase 9)
-│       ├── storage/           # Module 10: SQLite Storage (Planned Phase 10)
-│       └── analysis/          # Module 11: Export & Visualization (Planned Phase 11)
+│       ├── mqtt/              # Module 5: MQTT Alert Transmission & Delivery Verification (Implemented Phase 4)
+│       │   ├── __init__.py
+│       │   ├── config.py          # Centralized MqttConfig & environment overrides
+│       │   ├── delivery_tracker.py # 5-stage verification tracker & latency metrics
+│       │   ├── publisher.py       # Asynchronous MQTT alert publisher (PUBACK tracking)
+│       │   ├── subscriber.py      # Independent receiver & application ACK generator
+│       │   ├── manager.py         # MqttManager orchestrator (IMqttManager contract)
+│       │   └── receiver.py        # Standalone CLI alert receiver
+│       ├── policies/          # Module 6: Six ACK Policies (Planned Phase 5)
+│       ├── dqn/               # Module 7: Neural Network & Replay Buffer (Planned Phase 6/7)
+│       ├── controller/        # Module 8: DQN Online Controller (Planned Phase 7/8)
+│       ├── simulation/        # Module 9: Simulation Engine (Planned Phase 8/9)
+│       ├── storage/           # Module 10: SQLite Storage (Planned Phase 9/10)
+│       └── analysis/          # Module 11: Export & Visualization (Planned Phase 10/11)
 └── tests/
     ├── __init__.py
     ├── test_app_entrypoint.py
@@ -350,6 +456,7 @@ d:\Maj_2
     ├── test_dashboard_state.py           # Phase 2 Dashboard state tests
     ├── test_incident_monitoring.py       # Phase 3 Incident & Alert Management tests (18 tests)
     ├── test_module_boundaries.py         # Boundary validation for Modules 1-12
+    ├── test_mqtt_integration.py          # Phase 4 MQTT Transmission & Verification tests (17 tests)
     ├── test_sensor_scenarios_and_status.py # Scenario & hysteresis tests
     ├── test_topology.py                  # Phase 2 IoT Topology unit tests
     ├── test_types_and_contracts.py       # Domain contracts and serialization tests
@@ -360,39 +467,55 @@ d:\Maj_2
 
 ## Execution Commands
 
-### 1. Launch the Streamlit Dashboard (Phase 3 UI)
+### 1. Launch the Streamlit Dashboard (Phase 4 UI)
 ```powershell
 streamlit run app.py
 ```
 
-### 2. Run the Full Automated Pytest Suite (102 Tests)
+### 2. Run the Full Automated Pytest Suite (119 Tests)
 ```powershell
 python -m pytest tests/
 ```
 
-### 3. Run the Virtual Sensor CLI Verification Demo
+### 3. Run the Live End-to-End MQTT Alert Demonstration
+```powershell
+python scripts/demo_mqtt_alert.py
+```
+
+### 4. Launch Standalone Background MQTT Receiver
+```powershell
+python -m rl_ack.mqtt.receiver
+```
+
+### 5. Run the Virtual Sensor CLI Verification Demo
 ```powershell
 python scripts/demo_sensors.py
 ```
 
-### 4. Run Diagnostic Stack Check
+### 6. Run Diagnostic Stack Check
 ```powershell
 python main.py
 ```
 
 ---
 
-## Phase 3 Scope Boundaries & Subsystems Status
+## Phase 4 Scope Boundaries & Subsystems Status
 
-In strict adherence to Phase 3 scope:
+In strict adherence to Phase 4 scope:
 - **Implemented Subsystems**:
-  - Independent rule-based incident detection (`IncidentDetector`).
-  - Full incident lifecycle management (`IncidentManager`: `ACTIVE` $\rightarrow$ `ACKNOWLEDGED` $\rightarrow$ `RECOVERED` $\rightarrow$ `CLOSED`).
-  - Consecutive sample deduplication, rerun idempotency, and severity escalation (`WARNING` $\rightarrow$ `CRITICAL`).
-  - Hysteresis clearing verification and informational recovery alerts.
-  - Interactive operator acknowledgement in the Streamlit UI with wall-clock and simulation timestamps.
-  - Interactive Incident Monitoring tab in the dashboard with live summary KPIs, active incidents table, and bounded alert history.
-- **Subsystems Intentionally Deferred to Future Phases**:
-  - **No MQTT Publishing**: Mosquitto broker setup, topic publishing, subscriber receipt verification, and network delivery verification will be implemented in Phase 5. Alerts are recorded and tracked locally only.
+  - Eclipse Mosquitto broker integration and Paho MQTT client (v2 Callback API).
+  - Configurable centralized MQTT configuration with environment variable overrides.
+  - Strict topic taxonomy: `rlack/kitchen/alerts`, `rlack/kitchen/alerts/ack`, `rlack/kitchen/telemetry`.
+  - JSON payload validation and deserialization (`AlertMessage.from_json()`).
+  - Asynchronous non-blocking publisher (`MqttAlertPublisher`) tracking broker PUBACK callbacks.
+  - Independent subscriber (`MqttAlertSubscriber`) verifying alerts, detecting duplicates, and returning application receipt ACKs.
+  - Multi-stage delivery verification tracker (`DeliveryTracker`) separating protocol QoS from application confirmation.
+  - Real wall-clock latency measurement (publication, subscriber receipt, application ACK, and end-to-end round trip).
+  - Interactive Streamlit MQTT Delivery Center tab with real-time status, QoS selector, and verification log.
+  - Standalone CLI receiver and end-to-end verification demo script.
+- **Subsystems Intentionally Deferred to Subsequent Phases**:
+  - **No Six-Policy Comparative Analysis**: Fixed ACK policies and comparative evaluations belong to Phase 5.
+  - **No DQN Training or Adaptive ACK Selection**: Deep Q-Network training, experience replay, and adaptive action selection belong to subsequent phases.
+  - **No SQLite Persistence**: Database logging and CSV export belong to Phase 10.
   - **No DQN Training or Adaptive ACK Decisions**: The DQN neural network, action selection, and ACK policy comparisons belong to Phases 6, 7 & 8.
   - **No SQLite Persistence**: Experiment runs and database persistence belong to Phase 10.

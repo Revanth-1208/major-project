@@ -13,8 +13,10 @@ from rl_ack.common.enums import (
 from rl_ack.common.exceptions import (
     BrokerConnectionError,
     ConfigurationError,
+    DeliveryTimeoutError,
     DQNModelError,
     InvalidStateTransitionError,
+    MqttPayloadError,
     PolicyExecutionError,
     RLAckError,
     SensorSimulationError,
@@ -70,4 +72,6 @@ __all__ = [
     "StorageError",
     "SensorSimulationError",
     "InvalidStateTransitionError",
+    "MqttPayloadError",
+    "DeliveryTimeoutError",
 ]

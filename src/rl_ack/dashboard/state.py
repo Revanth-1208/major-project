@@ -8,6 +8,7 @@ from rl_ack.common.enums import NodeOperationalStatus, SensorType
 from rl_ack.common.models import SensorReading
 from rl_ack.monitoring.detector import IncidentDetector
 from rl_ack.monitoring.manager import IncidentManager
+from rl_ack.mqtt.manager import MqttManager
 from rl_ack.sensors.sensor_engine import SensorEngine
 from rl_ack.sensors.scenarios import (
     SensorScenario,
@@ -51,6 +52,9 @@ class DashboardSimulationManager:
         self.incident_manager = IncidentManager(
             detector=IncidentDetector(sensor_configs=self.get_sensor_configs())
         )
+        self.mqtt_manager = MqttManager()
+        self.auto_publish_mqtt: bool = True
+        self.mqtt_qos: int = 1
         self.active_scenario: Optional[SensorScenario] = None
         self._history: deque[SensorReading] = deque(maxlen=self.max_history)
         self._applied_event_indices: set[int] = set()
@@ -96,6 +100,7 @@ class DashboardSimulationManager:
         self._applied_event_indices.clear()
         self.incident_manager.reset()
         self.incident_manager.detector.sensor_configs = self.get_sensor_configs()
+        self.mqtt_manager.reset()
         self.simulation_status = "Stopped"
 
     @property
@@ -134,7 +139,12 @@ class DashboardSimulationManager:
         for r in new_readings:
             self._history.append(r)
 
-        self.incident_manager.process_readings(new_readings)
+        new_alerts = self.incident_manager.process_readings(new_readings)
+        if self.auto_publish_mqtt:
+            for alert in new_alerts:
+                self.mqtt_manager.publish_alert(alert, qos=self.mqtt_qos)
+
+        self.mqtt_manager.check_timeouts()
 
         if self.simulation_status != "Running":
             self.simulation_status = "Paused"
@@ -303,4 +313,26 @@ class DashboardSimulationManager:
         return self.incident_manager.close_incident(
             incident_id, simulation_time_s=self.engine.current_simulation_time
         )
+
+    def get_mqtt_metrics(self) -> Dict[str, Any]:
+        """Return MQTT broker and delivery verification statistics."""
+        return self.mqtt_manager.get_delivery_metrics()
+
+    def get_mqtt_delivery_df(self) -> pd.DataFrame:
+        """Return pandas DataFrame of MQTT delivery verification records."""
+        return self.mqtt_manager.get_delivery_df()
+
+    def connect_mqtt(self) -> bool:
+        """Attempt to connect MQTT publisher and subscriber to broker."""
+        return self.mqtt_manager.connect()
+
+    def disconnect_mqtt(self) -> None:
+        """Disconnect MQTT clients from broker."""
+        self.mqtt_manager.disconnect()
+
+    def set_mqtt_qos(self, qos: int) -> None:
+        """Update active MQTT alert publication QoS level."""
+        self.mqtt_qos = qos
+        self.mqtt_manager.config.default_alert_qos = qos
+
 

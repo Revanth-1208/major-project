@@ -13,6 +13,7 @@ from rl_ack.common.enums import (
     SensorType,
     TrafficClass,
 )
+from rl_ack.common.exceptions import MqttPayloadError
 
 
 @dataclass
@@ -228,6 +229,78 @@ class AlertMessage:
         """Serialize alert message to JSON string."""
         import json
         return json.dumps(self.to_dict())
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AlertMessage":
+        """Reconstruct AlertMessage from dictionary, validating required fields."""
+        if not isinstance(data, dict):
+            raise MqttPayloadError(f"Alert payload must be a JSON object, got {type(data).__name__}")
+
+        if "alert_id" not in data or not data["alert_id"]:
+            raise MqttPayloadError("Missing required field: alert_id")
+        if "sensor_id" not in data or not data["sensor_id"]:
+            raise MqttPayloadError("Missing required field: sensor_id")
+
+        # Severity
+        sev_raw = data.get("severity", "warning")
+        try:
+            sev = AlertSeverity(sev_raw)
+        except (ValueError, KeyError):
+            sev = AlertSeverity.WARNING
+
+        # Priority
+        pri_raw = data.get("priority", data.get("traffic_class", TrafficClass.CRITICAL_CONTROL.value))
+        try:
+            priority = TrafficClass(pri_raw)
+        except (ValueError, KeyError):
+            priority = TrafficClass.CRITICAL_CONTROL
+
+        # Delivery status
+        ds_raw = data.get("delivery_status", data.get("status", DeliveryStatus.GENERATED.value))
+        try:
+            del_stat = DeliveryStatus(ds_raw)
+        except (ValueError, KeyError):
+            del_stat = DeliveryStatus.GENERATED
+
+        # Numeric values
+        val = float(data.get("reading_value", data.get("value", 0.0)))
+        thresh = float(data.get("threshold_value", data.get("threshold", 0.0)))
+        sim_time = float(data.get("simulation_time_s", data.get("timestamp", 0.0)))
+
+        return cls(
+            alert_id=str(data["alert_id"]),
+            sensor_id=str(data["sensor_id"]),
+            severity=sev,
+            reading_value=val,
+            threshold_value=thresh,
+            unit=str(data.get("unit", "")),
+            incident_type=str(data.get("incident_type", "threshold_violation")),
+            message=str(data.get("message", "")),
+            simulation_time_s=sim_time,
+            created_at_utc=str(data.get("created_at_utc", data.get("created_at", ""))),
+            priority=priority,
+            destination_topic=str(data.get("destination_topic", "rlack/kitchen/alerts")),
+            delivery_status=del_stat,
+            published_at_utc=data.get("published_at_utc"),
+            broker_ack_at_utc=data.get("broker_ack_at_utc"),
+            received_at_utc=data.get("received_at_utc"),
+            app_ack_at_utc=data.get("app_ack_at_utc", data.get("acknowledged_at")),
+            recovered_at_utc=data.get("recovered_at_utc", data.get("recovered_at")),
+            retry_count=int(data.get("retry_count", 0)),
+            failure_reason=data.get("failure_reason"),
+            incident_id=data.get("incident_id"),
+            host_node=str(data.get("host_node", "")),
+        )
+
+    @classmethod
+    def from_json(cls, json_str: str) -> "AlertMessage":
+        """Reconstruct AlertMessage from JSON string, handling decoding errors."""
+        import json
+        try:
+            data = json.loads(json_str)
+        except Exception as e:
+            raise MqttPayloadError(f"Malformed JSON payload: {e}") from e
+        return cls.from_dict(data)
 
 
 @dataclass
