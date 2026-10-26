@@ -11,6 +11,14 @@ NOTE: Operating ranges and incident thresholds are simulation parameters,
 not certified life-safety limits.
 """
 
+import sys
+from pathlib import Path
+
+# Ensure src/ is on sys.path even when running from inside src/rl_ack
+_src_dir = str(Path(__file__).resolve().parent.parent.parent)
+if _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
+
 from rl_ack.sensors.config import (
     SensorConfig,
     get_default_gas_config,
