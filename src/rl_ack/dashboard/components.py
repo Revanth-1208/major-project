@@ -1314,23 +1314,63 @@ def render_dqn_decision_monitor_tab(manager: Any) -> None:
 
         # Delivery Result for Latest Decision (Phase 7 Section 7)
         st.markdown("##### 📡 Actual Policy Execution & Multi-Stage Delivery Result")
-        c_d1, c_d2, c_d3, c_d4, c_d5 = st.columns(5)
-        with c_d1:
-            st.metric("Policy Invoked", latest_decision.policy_name, f"Action {latest_decision.action_idx}")
-        with c_d2:
-            stat_badge = "🟢 CONFIRMED" if latest_decision.delivery_confirmed else (
-                "🟡 " + latest_decision.delivery_status if latest_decision.delivery_status != "FAILED" else "🔴 FAILED"
-            )
-            st.metric("Delivery Status", stat_badge, latest_decision.evaluation_mode)
-        with c_d3:
-            b_ack = "✅ ACKED" if latest_decision.broker_acknowledged else ("N/A (QoS 0)" if latest_decision.configured_qos == 0 else "❌ No ACK")
-            st.metric("Broker ACK", b_ack)
-        with c_d4:
-            s_rec = "✅ RECEIVED" if latest_decision.subscriber_received else "⏳ Pending / Offline"
-            st.metric("Subscriber Receipt", s_rec)
-        with c_d5:
-            lat_str = f"{latest_decision.end_to_end_latency_ms:.1f} ms" if latest_decision.end_to_end_latency_ms is not None else "—"
-            st.metric("E2E Latency", lat_str, f"Retries: {latest_decision.retry_count} | Overhead: {latest_decision.overhead_bytes}B")
+
+        # Custom scoped typography: reduce metric value font size to 21px and label to 14px strictly for this section
+        st.markdown(
+            """
+            <style>
+            div[data-testid="stVerticalBlock"]:has(> div .delivery-metrics-anchor) [data-testid="stMetricValue"],
+            .st-key-delivery_result_metrics_section [data-testid="stMetricValue"] {
+                font-size: 21px !important;
+                font-weight: 700 !important;
+                line-height: 1.25 !important;
+                white-space: normal !important;
+                word-break: break-word !important;
+            }
+            div[data-testid="stVerticalBlock"]:has(> div .delivery-metrics-anchor) [data-testid="stMetricLabel"],
+            .st-key-delivery_result_metrics_section [data-testid="stMetricLabel"] {
+                font-size: 14px !important;
+                font-weight: 600 !important;
+            }
+            div[data-testid="stVerticalBlock"]:has(> div .delivery-metrics-anchor) [data-testid="stMetricLabel"] p,
+            .st-key-delivery_result_metrics_section [data-testid="stMetricLabel"] p {
+                font-size: 14px !important;
+                font-weight: 600 !important;
+            }
+            div[data-testid="stVerticalBlock"]:has(> div .delivery-metrics-anchor) [data-testid="stMetricDelta"],
+            .st-key-delivery_result_metrics_section [data-testid="stMetricDelta"] {
+                font-size: 12px !important;
+                line-height: 1.2 !important;
+                white-space: normal !important;
+                word-break: break-word !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        with st.container(key="delivery_result_metrics_section"):
+            st.markdown('<div class="delivery-metrics-anchor"></div>', unsafe_allow_html=True)
+            c_d1, c_d2, c_d3, c_d4, c_d5 = st.columns(5)
+            with c_d1:
+                st.metric("Policy Invoked", latest_decision.policy_name, f"Action {latest_decision.action_idx}")
+            with c_d2:
+                if latest_decision.delivery_confirmed:
+                    stat_badge = "🟢 CONFIRMED"
+                elif str(latest_decision.delivery_status).lower() in ["failed", "delivery_failed"]:
+                    stat_badge = "🔴 FAILED"
+                else:
+                    stat_badge = f"🟡 {str(latest_decision.delivery_status).upper()}"
+                st.metric("Delivery Status", stat_badge, latest_decision.evaluation_mode)
+            with c_d3:
+                b_ack = "✅ ACKED" if latest_decision.broker_acknowledged else ("N/A (QoS 0)" if latest_decision.configured_qos == 0 else "❌ No ACK")
+                st.metric("Broker ACK", b_ack)
+            with c_d4:
+                s_rec = "✅ RECEIVED" if latest_decision.subscriber_received else "⏳ Pending / Offline"
+                st.metric("Subscriber Receipt", s_rec)
+            with c_d5:
+                lat_str = f"{latest_decision.end_to_end_latency_ms:.1f} ms" if latest_decision.end_to_end_latency_ms is not None else "—"
+                st.metric("E2E Latency", lat_str, f"Retries: {latest_decision.retry_count} | Overhead: {latest_decision.overhead_bytes}B")
 
         if latest_decision.failure_reason:
             st.warning(f"ℹ️ **Transport Diagnostic:** {latest_decision.failure_reason}")
