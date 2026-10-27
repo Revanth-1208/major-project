@@ -116,3 +116,32 @@ def test_no_duplicate_element_ids_in_components_source():
     duplicate_keys = [k for k in keys if keys.count(k) > 1]
     assert len(duplicate_keys) == 0, f"Found duplicate widget keys in components.py: {set(duplicate_keys)}"
 
+
+def test_dqn_decision_monitor_chart_renders_with_actual_telemetry_schema():
+    """Regression test ensuring render_dqn_decision_monitor_tab renders its telemetry chart without column mismatches."""
+    from rl_ack.dashboard.state import DashboardSimulationManager
+    from rl_ack.dashboard.components import render_dqn_decision_monitor_tab
+
+    # 1. Test with empty telemetry DataFrame (graceful handling, no exception)
+    mgr_empty = DashboardSimulationManager(scenario_name="Normal Operation", random_seed=42)
+    assert mgr_empty.get_time_series_df().empty
+    render_dqn_decision_monitor_tab(mgr_empty)
+
+    # 2. Test with populated emergency decisions and real telemetry columns
+    mgr = DashboardSimulationManager(scenario_name="Kitchen Fire Multi-Event Emergency", random_seed=42)
+    mgr.run_steps(8)
+
+    # Verify decisions and telemetry exist
+    kpis = mgr.get_dqn_controller_kpis()
+    assert kpis["total_decisions"] > 0, "Decisions must be generated to trigger the performance metrics section."
+
+    ts_df = mgr.get_time_series_df()
+    assert not ts_df.empty
+    expected_cols = ["simulation_time_s", "sensor_id", "value", "unit", "status"]
+    for col in expected_cols:
+        assert col in ts_df.columns, f"Expected column {col} in telemetry DataFrame"
+
+    # Must render without ValueError: Value of 'x' is not the name of a column
+    render_dqn_decision_monitor_tab(mgr)
+
+

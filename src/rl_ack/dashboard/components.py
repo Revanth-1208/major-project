@@ -1372,19 +1372,49 @@ def render_dqn_decision_monitor_tab(manager: Any) -> None:
         with c_ts:
             st.markdown("##### 📈 Live Sensor Telemetry Time-Series")
             ts_df = manager.get_time_series_df()
-            if not ts_df.empty:
-                fig_ts = px.line(
-                    ts_df,
-                    x="timestamp_s",
-                    y="reading_value",
-                    color="sensor_id",
-                    title="Real Telemetry Stream",
-                    labels={"timestamp_s": "Simulation Time (s)", "reading_value": "Value"},
-                )
-                fig_ts.update_layout(height=260, margin=dict(l=20, r=20, t=30, b=20))
-                st.plotly_chart(fig_ts, width="stretch")
+            if ts_df is None or ts_df.empty or "simulation_time_s" not in ts_df.columns or "value" not in ts_df.columns:
+                st.info("ℹ️ No sensor telemetry recorded yet. Start or step the simulation to collect readings.")
             else:
-                st.caption("No telemetry recorded yet.")
+                available_sensors = sorted(ts_df["sensor_id"].unique().tolist())
+                filter_col1, filter_col2 = st.columns([1, 1])
+                with filter_col1:
+                    selected_sensor = st.selectbox(
+                        "Filter Sensor",
+                        options=["All Sensors"] + available_sensors,
+                        index=0,
+                        key="dqn_ts_sensor_filter",
+                        label_visibility="collapsed",
+                    )
+                with filter_col2:
+                    st.caption(f"📊 {len(ts_df)} readings recorded")
+
+                filtered_df = ts_df if selected_sensor == "All Sensors" else ts_df[ts_df["sensor_id"] == selected_sensor]
+
+                if filtered_df.empty:
+                    st.info(f"ℹ️ No readings recorded for {selected_sensor} yet.")
+                else:
+                    units = filtered_df["unit"].dropna().unique().tolist()
+                    y_label = f"Reading ({units[0]})" if len(units) == 1 else "Sensor Reading"
+
+                    fig_ts = px.line(
+                        filtered_df,
+                        x="simulation_time_s",
+                        y="value",
+                        color="sensor_id",
+                        markers=True,
+                        hover_data=["unit", "status"],
+                        labels={
+                            "simulation_time_s": "Simulation Time (s)",
+                            "value": y_label,
+                            "sensor_id": "Sensor",
+                        },
+                    )
+                    fig_ts.update_layout(
+                        height=260,
+                        margin=dict(l=20, r=20, t=10, b=20),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                    )
+                    st.plotly_chart(fig_ts, width="stretch")
 
     st.markdown("---")
 
