@@ -40,6 +40,7 @@ from rl_ack.sensors.gas_sensor import GasSensor
 from rl_ack.sensors.humidity_sensor import HumiditySensor
 from rl_ack.sensors.smoke_sensor import SmokeSensor
 from rl_ack.sensors.temperature_sensor import TemperatureSensor
+from rl_ack.policies.network_model import SimulatedNetworkModel, NetworkModelConfig
 
 
 # ------------------------------------------------------------------------------
@@ -343,3 +344,126 @@ def test_simulation_manager_step_routes_through_dqn_and_mqtt():
     # CSV export
     csv_str = mgr.export_dqn_decisions_csv()
     assert "DEC-0001" in csv_str
+
+
+# ------------------------------------------------------------------------------
+# 5. Phase 7 Policy Execution, Idempotency, and Delivery Tracking Tests
+# ------------------------------------------------------------------------------
+
+
+def test_dqn_controller_apply_policy_controlled_network():
+    """Verify apply_policy executes mapped Phase 5 policy in controlled simulation mode."""
+    controller = DqnAckController()
+    net = SimulatedNetworkModel(NetworkModelConfig(packet_loss_rate=0.0, ack_loss_rate=0.0, latency_base_ms=10.0))
+
+    alert = AlertMessage(
+        alert_id="ALT-SIM-001",
+        sensor_id="TEMP-001",
+        priority=TrafficClass.HIGH_BANDWIDTH_STREAMING,
+        severity=AlertSeverity.WARNING,
+        reading_value=48.0,
+        threshold_value=45.0,
+        unit="°C",
+    )
+
+    decision = controller.select_action(alert)
+    assert decision.action_idx in range(5)
+
+    # Apply policy via network model
+    outcome = controller.apply_policy(alert, decision, network_model=net)
+    assert outcome.delivery_confirmed is True
+    assert decision.delivery_status == "delivery_confirmed"
+    assert decision.evaluation_mode == "controlled_simulation"
+    assert decision.retry_count >= 0
+    assert decision.overhead_bytes >= 0
+    assert decision.end_to_end_latency_ms is not None
+    assert decision.delivery_confirmed is True
+
+
+def test_dqn_controller_offline_mqtt_handling():
+    """Verify apply_policy faithfully records failure without fabricating delivery when MQTT is offline."""
+    controller = DqnAckController()
+    alert = AlertMessage(
+        alert_id="ALT-OFFLINE-001",
+        sensor_id="GAS-001",
+        priority=TrafficClass.CRITICAL_CONTROL,
+        severity=AlertSeverity.CRITICAL,
+        reading_value=90.0,
+        threshold_value=50.0,
+        unit="ppm",
+    )
+
+    decision = controller.select_action(alert)
+
+    # In live mode with no connected MQTT manager (or broker offline)
+    outcome = controller.apply_policy(alert, decision, mqtt_manager=None, live_mode=True)
+    assert decision.delivery_status == "failed"
+    assert decision.delivery_confirmed is False
+    assert decision.broker_acknowledged is False
+    assert decision.subscriber_received is False
+    assert "offline" in decision.failure_reason.lower()
+    assert "live_mqtt" in decision.evaluation_mode.lower()
+
+
+def test_dqn_controller_per_message_idempotency():
+    """Verify that selecting action for the same alert ID returns the cached decision and does not re-infer."""
+    controller = DqnAckController()
+    alert = AlertMessage(
+        alert_id="ALT-IDEM-001",
+        sensor_id="SMOKE-001",
+        priority=TrafficClass.CRITICAL_CONTROL,
+        severity=AlertSeverity.CRITICAL,
+        reading_value=3.5,
+        threshold_value=3.0,
+        unit="% obs/m",
+    )
+
+    dec1 = controller.select_action(alert)
+    dec2 = controller.select_action(alert)
+
+    # Identical decision record returned
+    assert dec1.decision_id == dec2.decision_id
+    assert dec1.action_idx == dec2.action_idx
+    assert dec1.timestamp_iso == dec2.timestamp_iso
+    # Decision history does not duplicate
+    assert len([d for d in controller.decision_history if d.alert_id == alert.alert_id]) == 1
+
+
+def test_dqn_controller_kpis_aggregation():
+    """Verify get_kpis() accurately aggregates metrics from decision history."""
+    controller = DqnAckController()
+    net = SimulatedNetworkModel(NetworkModelConfig(packet_loss_rate=0.0, ack_loss_rate=0.0))
+
+    # Process 3 distinct alerts
+    for i in range(3):
+        alert = AlertMessage(
+            alert_id=f"ALT-KPI-{i}",
+            sensor_id="TEMP-001",
+            priority=TrafficClass.CRITICAL_CONTROL if i == 0 else TrafficClass.BEST_EFFORT,
+            severity=AlertSeverity.CRITICAL if i == 0 else AlertSeverity.WARNING,
+            reading_value=50.0 + i,
+            threshold_value=45.0,
+            unit="°C",
+        )
+        dec = controller.select_action(alert)
+        controller.apply_policy(alert, dec, network_model=net)
+
+    kpis = controller.get_kpis()
+    assert kpis["total_decisions"] == 3
+    assert kpis["delivery_confirmation_rate"] == 100.0
+    assert kpis["critical_delivery_rate"] == round(1 / 1 * 100, 1)
+    assert kpis["mean_e2e_latency_ms"] is not None
+    assert sum(kpis["action_counts"].values()) == 3
+
+
+def test_step_executes_policy_and_populates_delivery_outcome():
+    """Verify DashboardSimulationManager.step() applies policy to decisions and records outcomes."""
+    mgr = DashboardSimulationManager(scenario_name="Kitchen Fire Multi-Event Emergency")
+    mgr.run_steps(8)
+
+    decisions = mgr.get_recent_dqn_decisions()
+    assert len(decisions) > 0
+    for dec in decisions:
+        assert dec.delivery_status in ["delivery_confirmed", "failed", "pending"]
+        assert dec.evaluation_mode in ["live_mqtt (offline)", "controlled_simulation", "live_mqtt"]
+

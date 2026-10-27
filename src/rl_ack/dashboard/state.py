@@ -209,16 +209,20 @@ class DashboardSimulationManager:
 
         new_alerts = self.incident_manager.process_readings(new_readings)
         for alert in new_alerts:
-            # Module 8: DQN Controller Selects Adaptive ACK Strategy
+            # Phase 7: DQN Controller Selects Adaptive ACK Strategy & Executes Selected Policy
             decision = self.dqn_controller.select_action(
                 alert=alert,
                 simulation_time_s=self.engine.current_simulation_time,
             )
             alert.chosen_action = AckAction(decision.action_idx)
 
-            # Publish alert with controller-selected QoS when live MQTT is enabled
-            if self.auto_publish_mqtt:
-                self.mqtt_manager.publish_alert(alert, qos=decision.configured_qos)
+            # Apply the selected policy to transport and capture delivery outcome
+            self.dqn_controller.apply_policy(
+                alert=alert,
+                decision=decision,
+                mqtt_manager=self.mqtt_manager if self.auto_publish_mqtt else None,
+                live_mode=self.auto_publish_mqtt,
+            )
 
         self.mqtt_manager.check_timeouts()
 
@@ -733,6 +737,10 @@ class DashboardSimulationManager:
         if df.empty:
             return ""
         return df.to_csv(index=False)
+
+    def get_dqn_controller_kpis(self) -> Dict[str, Any]:
+        """Return aggregated operational and delivery performance KPIs from the active controller."""
+        return self.dqn_controller.get_kpis()
 
 
 

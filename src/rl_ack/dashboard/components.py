@@ -1283,6 +1283,7 @@ def render_dqn_decision_monitor_tab(manager: Any) -> None:
                     margin=dict(l=20, r=20, t=40, b=20),
                 )
                 st.plotly_chart(fig_q, width="stretch")
+                st.caption("📌 **Note on Q-Values:** Outputs represent expected cumulative multi-objective returns $Q(s, a)$, not probabilities. The action with $\\arg\\max_a Q(s, a)$ is selected.")
             else:
                 st.info(
                     f"⚠️ **Q-Values Unavailable:** Decision was produced via deterministic fallback policy "
@@ -1298,7 +1299,7 @@ def render_dqn_decision_monitor_tab(manager: Any) -> None:
                 ("2. Rolling ACK Rate", vec[1] if len(vec) > 1 else 0.0, "Recent delivery confirmation ratio [0, 1]"),
                 ("3. Queue Occupancy", vec[2] if len(vec) > 2 else 0.0, "Local transmission buffer fill level [0, 1]"),
                 ("4. is_Critical_Control (CC)", vec[3] if len(vec) > 3 else 0.0, "1.0 if Gas/Smoke emergency alert"),
-                ("5. is_Heartbeat_Status (HBS)", vec[4] if len(vec) > 4 else 0.0, "1.0 if Periodic Temp/Humidity reading"),
+                ("5. is_High_Bandwidth_Streaming (HBS)", vec[4] if len(vec) > 4 else 0.0, "1.0 if Periodic Temp/Humidity reading"),
                 ("6. is_Best_Effort (BET)", vec[5] if len(vec) > 5 else 0.0, "1.0 if Non-critical background telemetry"),
                 ("7. Remaining Energy", vec[6] if len(vec) > 6 else 0.0, "Simulated device battery reserve [0, 1]"),
                 ("8. Rolling Latency", vec[7] if len(vec) > 7 else 0.0, "Normalized end-to-end channel latency [0, 1]"),
@@ -1308,6 +1309,82 @@ def render_dqn_decision_monitor_tab(manager: Any) -> None:
                 for f in feature_defs
             ])
             st.dataframe(df_state, width="stretch", hide_index=True, height=320)
+
+        st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+
+        # Delivery Result for Latest Decision (Phase 7 Section 7)
+        st.markdown("##### 📡 Actual Policy Execution & Multi-Stage Delivery Result")
+        c_d1, c_d2, c_d3, c_d4, c_d5 = st.columns(5)
+        with c_d1:
+            st.metric("Policy Invoked", latest_decision.policy_name, f"Action {latest_decision.action_idx}")
+        with c_d2:
+            stat_badge = "🟢 CONFIRMED" if latest_decision.delivery_confirmed else (
+                "🟡 " + latest_decision.delivery_status if latest_decision.delivery_status != "FAILED" else "🔴 FAILED"
+            )
+            st.metric("Delivery Status", stat_badge, latest_decision.evaluation_mode)
+        with c_d3:
+            b_ack = "✅ ACKED" if latest_decision.broker_acknowledged else ("N/A (QoS 0)" if latest_decision.configured_qos == 0 else "❌ No ACK")
+            st.metric("Broker ACK", b_ack)
+        with c_d4:
+            s_rec = "✅ RECEIVED" if latest_decision.subscriber_received else "⏳ Pending / Offline"
+            st.metric("Subscriber Receipt", s_rec)
+        with c_d5:
+            lat_str = f"{latest_decision.end_to_end_latency_ms:.1f} ms" if latest_decision.end_to_end_latency_ms is not None else "—"
+            st.metric("E2E Latency", lat_str, f"Retries: {latest_decision.retry_count} | Overhead: {latest_decision.overhead_bytes}B")
+
+        if latest_decision.failure_reason:
+            st.warning(f"ℹ️ **Transport Diagnostic:** {latest_decision.failure_reason}")
+
+    # Aggregated Live History and Performance Metrics
+    kpis = manager.get_dqn_controller_kpis()
+    if kpis["total_decisions"] > 0:
+        st.markdown("---")
+        st.subheader("📊 Live ACK Controller Performance Metrics")
+        m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns(5)
+        with m_col1:
+            st.metric("Total Decisions", kpis["total_decisions"], f"Overrides: {kpis['safety_override_count']}")
+        with m_col2:
+            st.metric("Delivery Confirmed", f"{kpis['delivery_confirmation_rate']}%")
+        with m_col3:
+            st.metric("Critical Emergency Rate", f"{kpis['critical_delivery_rate']}%")
+        with m_col4:
+            mean_lat_disp = f"{kpis['mean_e2e_latency_ms']:.1f} ms" if kpis["mean_e2e_latency_ms"] is not None else "—"
+            st.metric("Avg E2E Latency", mean_lat_disp)
+        with m_col5:
+            st.metric("Retransmissions", kpis["total_retries"], f"Overhead: {kpis['total_overhead_bytes']} B")
+
+        c_act_chart, c_ts = st.columns([1, 1])
+        with c_act_chart:
+            st.markdown("##### 🎯 Action Selection Breakdown")
+            counts = kpis["action_counts"]
+            act_labels = ["0: QoS 0", "1: Local ACK", "2: QoS 1 Retry", "3: Selective Retry", "4: QoS 2"]
+            fig_act = go.Figure()
+            fig_act.add_trace(go.Bar(
+                x=act_labels,
+                y=[counts.get(i, 0) for i in range(5)],
+                marker_color=["#94A3B8", "#F59E0B", "#3B82F6", "#10B981", "#8B5CF6"],
+                text=[str(counts.get(i, 0)) for i in range(5)],
+                textposition="auto",
+            ))
+            fig_act.update_layout(height=260, margin=dict(l=20, r=20, t=20, b=20), xaxis_title="ACK Action Candidate", yaxis_title="Selection Count")
+            st.plotly_chart(fig_act, width="stretch")
+
+        with c_ts:
+            st.markdown("##### 📈 Live Sensor Telemetry Time-Series")
+            ts_df = manager.get_time_series_df()
+            if not ts_df.empty:
+                fig_ts = px.line(
+                    ts_df,
+                    x="timestamp_s",
+                    y="reading_value",
+                    color="sensor_id",
+                    title="Real Telemetry Stream",
+                    labels={"timestamp_s": "Simulation Time (s)", "reading_value": "Value"},
+                )
+                fig_ts.update_layout(height=260, margin=dict(l=20, r=20, t=30, b=20))
+                st.plotly_chart(fig_ts, width="stretch")
+            else:
+                st.caption("No telemetry recorded yet.")
 
     st.markdown("---")
 
@@ -1326,6 +1403,11 @@ def render_dqn_decision_monitor_tab(manager: Any) -> None:
             "traffic_class",
             "action_label",
             "configured_qos",
+            "delivery_status",
+            "delivery_confirmed",
+            "end_to_end_latency_ms",
+            "retry_count",
+            "overhead_bytes",
             "safety_override",
             "is_fallback",
             "model_id",

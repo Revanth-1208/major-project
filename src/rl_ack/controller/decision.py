@@ -36,6 +36,17 @@ class DqnDecisionRecord:
     timestamp_s: float = 0.0  # Monotonic simulation clock
     timestamp_iso: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
+    # Phase 7: Delivery Outcome Tracking
+    delivery_status: str = "PENDING"
+    delivery_confirmed: bool = False
+    broker_acknowledged: bool = False
+    subscriber_received: bool = False
+    end_to_end_latency_ms: Optional[float] = None
+    retry_count: int = 0
+    overhead_bytes: int = 0
+    failure_reason: Optional[str] = None
+    evaluation_mode: str = "live_mqtt"
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert decision record to dictionary."""
         return {
@@ -59,6 +70,15 @@ class DqnDecisionRecord:
             "model_id": self.model_id,
             "timestamp_s": round(self.timestamp_s, 2),
             "timestamp_iso": self.timestamp_iso,
+            "delivery_status": self.delivery_status,
+            "delivery_confirmed": self.delivery_confirmed,
+            "broker_acknowledged": self.broker_acknowledged,
+            "subscriber_received": self.subscriber_received,
+            "end_to_end_latency_ms": round(self.end_to_end_latency_ms, 2) if self.end_to_end_latency_ms is not None else None,
+            "retry_count": self.retry_count,
+            "overhead_bytes": self.overhead_bytes,
+            "failure_reason": self.failure_reason,
+            "evaluation_mode": self.evaluation_mode,
         }
 
     def to_json(self) -> str:
