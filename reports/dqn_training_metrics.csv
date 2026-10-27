@@ -1,0 +1,4 @@
+episode,total_reward,avg_loss,epsilon,delivery_rate,cc_delivery_rate,avg_latency_ms,deadline_compliance_rate,total_overhead_bytes,action_0_qos0,action_1_local_ack,action_2_qos1,action_3_selective,action_4_qos2,total_steps
+1,-40.27,,1.0,0.8,1.0,41.68,0.8,9297,3,1,0,2,4,0
+2,-40.82,,1.0,0.9,0.8333,48.43,0.8,10312,2,2,3,2,1,0
+3,147.72,,1.0,1.0,1.0,31.86,1.0,9363,3,1,4,1,1,0

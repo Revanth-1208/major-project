@@ -1,0 +1,6 @@
+Policy,Mode,Total Messages,Attempts,Retransmissions,Broker ACK Rate (%),Local ACK Rate (%),Subscriber Receipt Rate (%),Delivery Confirmed Rate (%),Mean E2E Latency (ms),Median E2E Latency (ms),P95 E2E Latency (ms),Deadline Compliance (%),Total Overhead (Bytes),Avg Overhead / Msg (B),Failures,CC Total,CC Delivery Rate (%),CC Mean Latency (ms),HBS Delivery Rate (%),BET Delivery Rate (%)
+Static MQTT QoS 0,controlled_simulation,25,25,0,0.0,0.0,80.0,80.0,13.85,14.02,19.91,80.0,23570,942.8,5,8,87.5,12.72,73.3,100.0
+Static Local ACK,controlled_simulation,25,25,0,0.0,100.0,88.0,80.0,22.46,22.45,28.0,80.0,24070,962.8,5,8,75.0,23.16,80.0,100.0
+Static MQTT QoS 1,controlled_simulation,25,31,6,100.0,0.0,100.0,100.0,59.29,27.01,175.2,76.0,29399,1176.0,0,8,100.0,42.99,100.0,100.0
+Local ACK plus Selective Retransmission,controlled_simulation,25,26,1,0.0,100.0,96.0,88.0,30.46,23.15,41.49,84.0,25056,1002.2,3,8,100.0,42.58,80.0,100.0
+Static MQTT QoS 2,controlled_simulation,25,25,0,64.0,0.0,96.0,64.0,46.74,43.61,57.93,64.0,23870,954.8,9,8,62.5,48.92,66.7,50.0
