@@ -31,6 +31,7 @@ from rl_ack.dashboard.components import (
     render_mqtt_delivery_tab,
     render_policy_comparison_tab,
     render_dqn_tab,
+    render_dqn_decision_monitor_tab,
 )
 from rl_ack.topology.models import create_smart_kitchen_topology
 
@@ -181,10 +182,11 @@ render_sensor_cards(
 st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
 
 # Main Tabbed Presentation
-tab_telemetry, tab_incident, tab_mqtt, tab_policy, tab_dqn, tab_topology, tab_stream, tab_arch = st.tabs([
+tab_telemetry, tab_incident, tab_mqtt, tab_dqn_dec, tab_policy, tab_dqn, tab_topology, tab_stream, tab_arch = st.tabs([
     "📊 Live Telemetry & Inventory",
     "🚨 Incident Monitoring & Alerts",
     "📡 MQTT Alert Delivery",
+    "🤖 DQN Decision Monitor",
     "⚖️ ACK Policy Comparison",
     "🧠 DQN Training & Evaluation",
     "🌐 IoT Network Topology",
@@ -196,6 +198,38 @@ tab_telemetry, tab_incident, tab_mqtt, tab_policy, tab_dqn, tab_topology, tab_st
 # Tab 1: Live Telemetry & Inventory
 # ------------------------------------------------------------------------------
 with tab_telemetry:
+    # Prominent Live Execution Controls Toolbar
+    st.subheader("🕹️ Simulation Engine Controls")
+    col_t1, col_t2, col_t3, col_t4, col_t5 = st.columns([1, 1, 1, 1, 2])
+    with col_t1:
+        if st.button("▶️ Start", key="tab_tel_btn_start", width="stretch", help="Run simulation continuously"):
+            st.session_state.auto_running = True
+            manager.resume()
+            st.rerun()
+    with col_t2:
+        if st.button("⏸️ Pause", key="tab_tel_btn_pause", width="stretch", help="Pause continuous execution"):
+            st.session_state.auto_running = False
+            manager.pause()
+            st.rerun()
+    with col_t3:
+        if st.button("🔄 Reset", key="tab_tel_btn_reset", width="stretch", help="Reset simulation to t=0"):
+            st.session_state.auto_running = False
+            manager.reset()
+            st.rerun()
+    with col_t4:
+        if st.button("⏩ Step (1s)", key="tab_tel_btn_step", width="stretch", help="Advance simulation by 1 step"):
+            st.session_state.auto_running = False
+            manager.step()
+            manager.pause()
+            st.rerun()
+    with col_t5:
+        st.markdown(
+            f"**Clock:** `{manager.current_time_s:.1f}s` | "
+            f"**Status:** `{manager.simulation_status}` | "
+            f"**Scenario:** `{manager.scenario_name}`"
+        )
+
+    st.markdown("---")
     st.subheader("📋 Virtual Sensor Inventory")
     st.caption("Live configuration, current readings, and derived operational statuses directly from the engine.")
 
@@ -223,13 +257,19 @@ with tab_mqtt:
     render_mqtt_delivery_tab(manager)
 
 # ------------------------------------------------------------------------------
-# Tab 4: ACK Policy Comparison & Baseline Evaluation (Phase 5)
+# Tab 4: DQN Adaptive ACK Decision Monitor (Phase 7 / Module 8)
+# ------------------------------------------------------------------------------
+with tab_dqn_dec:
+    render_dqn_decision_monitor_tab(manager)
+
+# ------------------------------------------------------------------------------
+# Tab 5: ACK Policy Comparison & Baseline Evaluation (Phase 5)
 # ------------------------------------------------------------------------------
 with tab_policy:
     render_policy_comparison_tab(manager)
 
 # ------------------------------------------------------------------------------
-# Tab 5: DQN Training & Evaluation (Phase 6)
+# Tab 6: DQN Training & Evaluation (Phase 6)
 # ------------------------------------------------------------------------------
 with tab_dqn:
     render_dqn_tab(manager)
@@ -299,7 +339,7 @@ with tab_arch:
             ("Module 5", "MQTT Alert Transmission & Delivery Verification", "Complete (Phase 4)", True),
             ("Module 6", "Fixed ACK Policy Engine & Comparative Evaluation", "Complete (Phase 5)", True),
             ("Module 7", "DQN Architecture & Training", "Complete (Phase 6)", True),
-            ("Module 8", "DQN Controller Integration", "Planned (Phase 7)", False),
+            ("Module 8", "DQN Controller Integration", "Complete (Phase 7)", True),
             ("Module 9", "Interactive Simulation Runner", "Planned (Phase 8)", False),
             ("Module 10", "Experiment Data Storage (SQLite)", "Planned (Phase 9)", False),
             ("Module 11", "Performance Analysis & CSV Export", "Planned (Phase 10)", False),

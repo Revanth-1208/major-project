@@ -21,7 +21,7 @@ MODULE_SPECS = [
     ("rl_ack.mqtt", 5, "mqtt", True),  # Module 5 implemented in Phase 4
     ("rl_ack.policies", 6, "policies", True),  # Module 6 implemented in Phase 5
     ("rl_ack.dqn", 7, "dqn", True),  # Module 7 implemented in Phase 6
-    ("rl_ack.controller", 8, "controller", False),
+    ("rl_ack.controller", 8, "controller", True),  # Module 8 implemented in Phase 7
     ("rl_ack.simulation", 9, "simulation", False),
     ("rl_ack.storage", 10, "storage", False),
     ("rl_ack.analysis", 11, "analysis", False),

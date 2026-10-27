@@ -6,8 +6,17 @@ from typing import Any, Dict, List, Optional
 import uuid
 import pandas as pd
 import time
-from rl_ack.common.enums import AlertSeverity, NodeOperationalStatus, SensorType, TrafficClass
+from rl_ack.common.enums import (
+    AckAction,
+    AlertSeverity,
+    EvaluationPolicy,
+    NodeOperationalStatus,
+    SensorType,
+    TrafficClass,
+)
 from rl_ack.common.models import AlertMessage, SensorReading
+from rl_ack.controller.controller import DqnAckController
+from rl_ack.controller.decision import DqnDecisionRecord
 from rl_ack.monitoring.detector import IncidentDetector
 from rl_ack.monitoring.manager import IncidentManager
 from rl_ack.mqtt.manager import MqttManager
@@ -89,6 +98,15 @@ class DashboardSimulationManager:
         self.last_dqn_eval_report: Optional[DQNEvaluationReport] = None
         self.is_dqn_training: bool = False
 
+        # Module 8: DQN Controller Integration
+        self.dqn_controller = DqnAckController(agent=self.dqn_agent)
+        # Attempt to load trained checkpoint if available
+        for default_ckpt in ["dqn_best.pt", "dqn_latest.pt"]:
+            ckpt_p = Path("checkpoints") / default_ckpt
+            if ckpt_p.is_file():
+                self.dqn_controller.load_checkpoint(ckpt_p)
+                break
+
         self.active_scenario: Optional[SensorScenario] = None
         self._history: deque[SensorReading] = deque(maxlen=self.max_history)
         self._applied_event_indices: set[int] = set()
@@ -135,6 +153,7 @@ class DashboardSimulationManager:
         self.incident_manager.reset()
         self.incident_manager.detector.sensor_configs = self.get_sensor_configs()
         self.mqtt_manager.reset()
+        self.dqn_controller.reset()
         self.simulation_status = "Stopped"
 
     @property
@@ -174,9 +193,17 @@ class DashboardSimulationManager:
             self._history.append(r)
 
         new_alerts = self.incident_manager.process_readings(new_readings)
-        if self.auto_publish_mqtt:
-            for alert in new_alerts:
-                self.mqtt_manager.publish_alert(alert, qos=self.mqtt_qos)
+        for alert in new_alerts:
+            # Module 8: DQN Controller Selects Adaptive ACK Strategy
+            decision = self.dqn_controller.select_action(
+                alert=alert,
+                simulation_time_s=self.engine.current_simulation_time,
+            )
+            alert.chosen_action = AckAction(decision.action_idx)
+
+            # Publish alert with controller-selected QoS when live MQTT is enabled
+            if self.auto_publish_mqtt:
+                self.mqtt_manager.publish_alert(alert, qos=decision.configured_qos)
 
         self.mqtt_manager.check_timeouts()
 
@@ -592,6 +619,51 @@ class DashboardSimulationManager:
         if df.empty:
             return ""
         return df.to_csv(index=False)
+
+    # --------------------------------------------------------------------------
+    # Module 8: DQN Controller Integration Methods
+    # --------------------------------------------------------------------------
+
+    def get_recent_dqn_decisions(self, limit: int = 50) -> List[DqnDecisionRecord]:
+        """Return list of recent live ACK decisions made by the DQN controller."""
+        return self.dqn_controller.get_recent_decisions(limit=limit)
+
+    def get_dqn_decisions_df(self, limit: int = 50) -> pd.DataFrame:
+        """Return pandas DataFrame of recent live ACK decisions for UI rendering."""
+        return self.dqn_controller.get_decisions_df(limit=limit)
+
+    def get_latest_dqn_decision(self) -> Optional[DqnDecisionRecord]:
+        """Return the most recent live decision record, if any."""
+        return self.dqn_controller.get_latest_decision()
+
+    def load_controller_checkpoint(self, filename: str) -> bool:
+        """Load selected checkpoint weights into both DQN agent and active controller."""
+        ckpt_path = Path("checkpoints") / filename
+        ok = self.dqn_controller.load_checkpoint(ckpt_path)
+        if ok:
+            # Also synchronize the trainer/evaluator agent
+            self.dqn_agent.load_checkpoint(ckpt_path)
+        return ok
+
+    def unload_controller_checkpoint(self) -> None:
+        """Explicitly unload checkpoint to demonstrate deterministic fallback."""
+        self.dqn_controller.unload_checkpoint()
+
+    def set_controller_fallback_policy(self, policy: EvaluationPolicy) -> None:
+        """Set fallback policy used when model is unready."""
+        self.dqn_controller.fallback_policy = policy
+
+    def set_controller_safety_override(self, enabled: bool) -> None:
+        """Enable or disable emergency safety override for Critical Control alerts."""
+        self.dqn_controller.enable_safety_override = enabled
+
+    def export_dqn_decisions_csv(self) -> str:
+        """Export live decision history as CSV string."""
+        df = self.get_dqn_decisions_df(limit=200)
+        if df.empty:
+            return ""
+        return df.to_csv(index=False)
+
 
 
 

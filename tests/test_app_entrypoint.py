@@ -25,6 +25,7 @@ def test_dashboard_components_import_and_definitions():
         render_mqtt_delivery_tab,
         render_policy_comparison_tab,
         render_dqn_tab,
+        render_dqn_decision_monitor_tab,
     )
     assert "NORMAL" in STATUS_BADGES
     assert callable(render_header)
@@ -36,6 +37,7 @@ def test_dashboard_components_import_and_definitions():
     assert callable(render_mqtt_delivery_tab)
     assert callable(render_policy_comparison_tab)
     assert callable(render_dqn_tab)
+    assert callable(render_dqn_decision_monitor_tab)
 
 
 def test_dashboard_components_render_without_exceptions():
@@ -52,6 +54,7 @@ def test_dashboard_components_render_without_exceptions():
         render_mqtt_delivery_tab,
         render_policy_comparison_tab,
         render_dqn_tab,
+        render_dqn_decision_monitor_tab,
     )
 
     manager = DashboardSimulationManager(random_seed=42)
@@ -67,6 +70,7 @@ def test_dashboard_components_render_without_exceptions():
     render_mqtt_delivery_tab(manager)
     render_policy_comparison_tab(manager)
     render_dqn_tab(manager)
+    render_dqn_decision_monitor_tab(manager)
 
     # Populated state render after steps
     manager.step(1.0)
@@ -77,6 +81,7 @@ def test_dashboard_components_render_without_exceptions():
     render_mqtt_delivery_tab(manager)
     render_policy_comparison_tab(manager)
     render_dqn_tab(manager)
+    render_dqn_decision_monitor_tab(manager)
 
 
 def test_dqn_tab_populated_rendering():

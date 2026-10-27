@@ -1101,5 +1101,224 @@ def render_dqn_tab(manager: Any) -> None:
             st.warning("⚠️ No saved checkpoints found in `checkpoints/`. Train the agent in the '🏋️ Agent Training Loop' tab to create checkpoints.")
 
 
+def render_dqn_decision_monitor_tab(manager: Any) -> None:
+    """Render Module 8 DQN Adaptive ACK Decision Monitor tab."""
+    st.subheader("🤖 Deep Q-Network (DQN) Adaptive ACK Decision Monitor")
+    st.caption(
+        "Real-time observation of DQN inference, 8-feature state vector extraction, "
+        "and dynamic acknowledgment action selection for incoming emergency alerts."
+    )
+
+    controller = manager.dqn_controller
+
+    # 1. Model Readiness & Checkpoint Configuration Banner
+    col_stat1, col_stat2 = st.columns([2, 1])
+
+    with col_stat1:
+        if controller.model_ready:
+            model_name = controller.current_model_path.name if controller.current_model_path else "Active"
+            st.success(
+                f"🟢 **DQN Model Active & Ready** (`{model_name}`)\n\n"
+                f"- **Inference Mode:** Strictly Deterministic Greedy ($\\epsilon = 0.0$)\n"
+                f"- **Input State Space:** 8 Continuous Features (Normalized $[0, 1]$)\n"
+                f"- **Action Space:** 5 Discrete ACK Strategies (QoS 0, Local ACK, QoS 1 Retry, Selective Retry, QoS 2)\n"
+                f"- **Agent Total Steps:** `{controller.agent.total_steps}` | **Episodes Trained:** `{controller.agent.episodes_trained}`"
+            )
+        else:
+            reason = controller.last_error or "No checkpoint loaded."
+            st.warning(
+                f"⚠️ **Safe Fallback Active** (Policy: `{controller.fallback_policy.value}`)\n\n"
+                f"- **Status:** {reason}\n"
+                f"- **Non-Suppression Guarantee:** Danger alerts are never suppressed or dropped; operating on deterministic fallback QoS."
+            )
+
+    with col_stat2:
+        st.markdown("##### ⚙️ Controller Controls")
+        available_ckpts = manager.get_available_checkpoints()
+        if available_ckpts:
+            col_sel, col_load = st.columns([2, 1])
+            with col_sel:
+                selected_ckpt = st.selectbox(
+                    "Model Checkpoint",
+                    options=available_ckpts,
+                    key="dqn_mon_ckpt_select",
+                    label_visibility="collapsed",
+                )
+            with col_load:
+                if st.button("📥 Load", key="dqn_mon_btn_load_ckpt", width="stretch"):
+                    ok = manager.load_controller_checkpoint(selected_ckpt)
+                    if ok:
+                        st.toast(f"Loaded {selected_ckpt} into controller!", icon="🟢")
+                    else:
+                        st.toast(f"Failed to load {selected_ckpt}", icon="❌")
+                    st.rerun()
+
+        col_unload, col_override = st.columns(2)
+        with col_unload:
+            if st.button("🛑 Unload", key="dqn_mon_btn_unload", width="stretch", help="Unload active model to test deterministic fallback behavior"):
+                manager.unload_controller_checkpoint()
+                st.toast("Model unloaded. Fallback mode active.", icon="⚠️")
+                st.rerun()
+
+        with col_override:
+            safety_val = st.toggle(
+                "Safety Override",
+                value=controller.enable_safety_override,
+                key="dqn_mon_toggle_safety",
+                help="When active, Critical Control alerts (gas/smoke) cannot be assigned QoS 0; automatically upgraded to QoS 1.",
+            )
+            if safety_val != controller.enable_safety_override:
+                manager.set_controller_safety_override(safety_val)
+                st.rerun()
+
+    st.markdown("---")
+
+    # 2. Latest Live Decision Inspection
+    latest_decision = manager.get_latest_dqn_decision()
+
+    if latest_decision is None:
+        st.info(
+            "💡 **No Emergency Alerts Processed Yet:**\n\n"
+            "Virtual sensors are currently operating within normal parameters. To trigger emergency alerts:\n"
+            "1. Switch scenario to **Kitchen Fire Multi-Event Emergency** or **Gradual Gas Leak** in the sidebar.\n"
+            "2. Click **▶️ Start Simulation** or **⏩ Run 10 Steps** in the Live Telemetry tab.\n"
+            "3. Return here to observe live DQN Q-values, 8-feature state extraction, and action selection."
+        )
+    else:
+        st.subheader("🎯 Latest Emergency Decision Inspection")
+        st.caption(f"Audit record for Decision `{latest_decision.decision_id}` (Generated at t={latest_decision.timestamp_s:.1f}s)")
+
+        # KPI Badges for Latest Decision
+        c_kpi1, c_kpi2, c_kpi3, c_kpi4 = st.columns(4)
+        with c_kpi1:
+            st.metric(
+                label="🚨 Outgoing Alert",
+                value=f"{latest_decision.alert_id}",
+                delta=f"Sensor: {latest_decision.sensor_id}",
+                delta_color="off",
+            )
+        with c_kpi2:
+            st.metric(
+                label="📊 Sensor Value",
+                value=f"{latest_decision.reading_value:.1f} {latest_decision.unit}",
+                delta=f"Threshold: {latest_decision.threshold_value:.1f} ({latest_decision.severity})",
+                delta_color="inverse",
+            )
+        with c_kpi3:
+            st.metric(
+                label="🤖 Chosen ACK Action",
+                value=f"{latest_decision.action_label}",
+                delta=f"Configured MQTT QoS {latest_decision.configured_qos}",
+            )
+        with c_kpi4:
+            if latest_decision.safety_override:
+                mode_str = "🛡️ Safety Override Applied"
+                mode_delta = "Upgraded to QoS 1"
+            elif latest_decision.is_fallback:
+                mode_str = "⚠️ Safe Fallback Active"
+                mode_delta = "Model Unloaded"
+            else:
+                mode_str = "🧠 DQN Greedy Inference"
+                mode_delta = f"Model: {latest_decision.model_id}"
+            st.metric(label="⚙️ Inference Mode", value=mode_str, delta=mode_delta, delta_color="off")
+
+        st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+
+        col_chart, col_state = st.columns([1, 1])
+
+        with col_chart:
+            st.markdown("##### 📈 Q-Value Distribution Across 5 Discrete Actions")
+            if latest_decision.q_values is not None:
+                action_names = [
+                    "0: QoS 0",
+                    "1: Local ACK",
+                    "2: QoS 1 Retry",
+                    "3: Selective Retry",
+                    "4: QoS 2",
+                ]
+                q_vals = latest_decision.q_values
+                colors = ["#38BDF8"] * 5
+                colors[latest_decision.action_idx] = "#10B981"  # Emerald for chosen action
+
+                fig_q = go.Figure()
+                fig_q.add_trace(go.Bar(
+                    x=action_names,
+                    y=q_vals,
+                    marker_color=colors,
+                    text=[f"{q:.3f}" for q in q_vals],
+                    textposition="auto",
+                ))
+                fig_q.update_layout(
+                    title=f"Q(s, a) Outputs (Selected: Action {latest_decision.action_idx})",
+                    xaxis_title="ACK Action Candidate",
+                    yaxis_title="Estimated Expected Return Q(s, a)",
+                    height=320,
+                    margin=dict(l=20, r=20, t=40, b=20),
+                )
+                st.plotly_chart(fig_q, width="stretch")
+            else:
+                st.info(
+                    f"⚠️ **Q-Values Unavailable:** Decision was produced via deterministic fallback policy "
+                    f"(`{latest_decision.policy_name}`) because the DQN checkpoint was unready. "
+                    f"No fabricated Q-values are displayed."
+                )
+
+        with col_state:
+            st.markdown("##### 🧩 Extracted 8-Feature State Vector")
+            vec = latest_decision.state_vector
+            feature_defs = [
+                ("1. Network Utilization", vec[0] if len(vec) > 0 else 0.0, "Channel bandwidth utilization [0, 1]"),
+                ("2. Rolling ACK Rate", vec[1] if len(vec) > 1 else 0.0, "Recent delivery confirmation ratio [0, 1]"),
+                ("3. Queue Occupancy", vec[2] if len(vec) > 2 else 0.0, "Local transmission buffer fill level [0, 1]"),
+                ("4. is_Critical_Control (CC)", vec[3] if len(vec) > 3 else 0.0, "1.0 if Gas/Smoke emergency alert"),
+                ("5. is_Heartbeat_Status (HBS)", vec[4] if len(vec) > 4 else 0.0, "1.0 if Periodic Temp/Humidity reading"),
+                ("6. is_Best_Effort (BET)", vec[5] if len(vec) > 5 else 0.0, "1.0 if Non-critical background telemetry"),
+                ("7. Remaining Energy", vec[6] if len(vec) > 6 else 0.0, "Simulated device battery reserve [0, 1]"),
+                ("8. Rolling Latency", vec[7] if len(vec) > 7 else 0.0, "Normalized end-to-end channel latency [0, 1]"),
+            ]
+            df_state = pd.DataFrame([
+                {"Feature": f[0], "Normalized Value": f"{f[1]:.4f}", "Interpretation": f[2]}
+                for f in feature_defs
+            ])
+            st.dataframe(df_state, width="stretch", hide_index=True, height=320)
+
+    st.markdown("---")
+
+    # 3. Live Decision Audit Stream Table
+    st.subheader("📜 Live ACK Decision Stream (Audit Trail)")
+    st.caption("Chronological record of every ACK strategy decision evaluated for generated emergency alerts.")
+
+    df_decisions = manager.get_dqn_decisions_df(limit=50)
+    if not df_decisions.empty:
+        display_cols = [
+            "decision_id",
+            "timestamp_s",
+            "alert_id",
+            "sensor_id",
+            "severity",
+            "traffic_class",
+            "action_label",
+            "configured_qos",
+            "safety_override",
+            "is_fallback",
+            "model_id",
+        ]
+        available_cols = [c for c in display_cols if c in df_decisions.columns]
+        st.dataframe(df_decisions[available_cols], width="stretch", hide_index=True, height=280)
+
+        csv_decisions = manager.export_dqn_decisions_csv()
+        st.download_button(
+            label="📄 Download DQN Decisions CSV",
+            data=csv_decisions,
+            file_name="rlack_dqn_decisions_audit.csv",
+            mime="text/csv",
+            width="stretch",
+            key="dqn_mon_btn_download_csv",
+        )
+    else:
+        st.caption("No decisions logged in current session.")
+
+
+
 
 
