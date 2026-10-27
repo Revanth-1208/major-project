@@ -86,6 +86,9 @@ class DQNAgent(IDQNAgent):
         self.epsilon: float = self.config.epsilon_start
         self.total_steps: int = 0
         self.episodes_trained: int = 0
+        self.last_load_error: Optional[str] = None
+        self.last_loaded_checkpoint: Optional[Path] = None
+        self.last_loaded_metadata: Optional[Dict[str, Any]] = None
 
     def select_action(
         self,
@@ -210,6 +213,17 @@ class DQNAgent(IDQNAgent):
             self.epsilon = float(meta.get("epsilon", self.config.epsilon_min))
             self.total_steps = int(meta.get("total_steps", 0))
             self.episodes_trained = int(meta.get("episodes_trained", 0))
+            self.last_load_error = None
+            self.last_loaded_checkpoint = Path(path)
+            self.last_loaded_metadata = meta
             return True
-        except CheckpointError:
+        except CheckpointError as e:
+            self.last_load_error = str(e)
+            self.last_loaded_checkpoint = None
+            self.last_loaded_metadata = None
+            return False
+        except Exception as e:
+            self.last_load_error = f"Unexpected error: {e}"
+            self.last_loaded_checkpoint = None
+            self.last_loaded_metadata = None
             return False

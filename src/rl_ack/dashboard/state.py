@@ -1,6 +1,7 @@
 """Simulation state manager for the RL-ACK Streamlit dashboard."""
 
 from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import uuid
@@ -100,12 +101,26 @@ class DashboardSimulationManager:
 
         # Module 8: DQN Controller Integration
         self.dqn_controller = DqnAckController(agent=self.dqn_agent)
+        self.checkpoint_load_status: Optional[Dict[str, Any]] = None
         # Attempt to load trained checkpoint if available
         for default_ckpt in ["dqn_best.pt", "dqn_latest.pt"]:
             ckpt_p = Path("checkpoints") / default_ckpt
             if ckpt_p.is_file():
-                self.dqn_controller.load_checkpoint(ckpt_p)
-                break
+                if self.dqn_controller.load_checkpoint(ckpt_p):
+                    self.dqn_agent.load_checkpoint(ckpt_p)
+                    self.checkpoint_load_status = {
+                        "success": True,
+                        "filename": default_ckpt,
+                        "filepath": str(ckpt_p),
+                        "device": str(self.dqn_agent.device),
+                        "error": None,
+                        "total_steps": self.dqn_agent.total_steps,
+                        "episodes_trained": self.dqn_agent.episodes_trained,
+                        "epsilon": self.dqn_agent.epsilon,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "metadata": self.dqn_controller.checkpoint_metadata,
+                    }
+                    break
 
         self.active_scenario: Optional[SensorScenario] = None
         self._history: deque[SensorReading] = deque(maxlen=self.max_history)
@@ -602,9 +617,57 @@ class DashboardSimulationManager:
         return sorted([f.name for f in ckpt_dir.glob("*.pt")])
 
     def load_dqn_checkpoint(self, filename: str) -> bool:
-        """Load selected checkpoint weights into active DQN agent."""
+        """Load selected checkpoint weights into active DQN agent and controller with persistent status."""
         ckpt_path = Path("checkpoints") / filename
-        return self.dqn_agent.load_checkpoint(ckpt_path)
+        if not ckpt_path.is_file():
+            err_msg = f"Checkpoint file not found: {ckpt_path}"
+            self.checkpoint_load_status = {
+                "success": False,
+                "filename": filename,
+                "filepath": str(ckpt_path),
+                "device": str(self.dqn_agent.device),
+                "error": err_msg,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "total_steps": self.dqn_agent.total_steps,
+                "episodes_trained": self.dqn_agent.episodes_trained,
+                "epsilon": self.dqn_agent.epsilon,
+                "metadata": None,
+            }
+            return False
+
+        # Attempt to load through controller which verifies schema and architecture dimensions
+        ok = self.dqn_controller.load_checkpoint(ckpt_path)
+        if ok:
+            # Synchronize agent state as well
+            self.dqn_agent.load_checkpoint(ckpt_path)
+            self.checkpoint_load_status = {
+                "success": True,
+                "filename": filename,
+                "filepath": str(ckpt_path),
+                "device": str(self.dqn_agent.device),
+                "error": None,
+                "total_steps": self.dqn_agent.total_steps,
+                "episodes_trained": self.dqn_agent.episodes_trained,
+                "epsilon": self.dqn_agent.epsilon,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "metadata": self.dqn_controller.checkpoint_metadata,
+            }
+            return True
+        else:
+            err_msg = self.dqn_controller.last_error or self.dqn_agent.last_load_error or "Incompatible format or architecture."
+            self.checkpoint_load_status = {
+                "success": False,
+                "filename": filename,
+                "filepath": str(ckpt_path),
+                "device": str(self.dqn_agent.device),
+                "error": err_msg,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "total_steps": self.dqn_agent.total_steps,
+                "episodes_trained": self.dqn_agent.episodes_trained,
+                "epsilon": self.dqn_agent.epsilon,
+                "metadata": None,
+            }
+            return False
 
     def export_dqn_training_csv(self) -> str:
         """Export training history as CSV string."""
@@ -638,16 +701,23 @@ class DashboardSimulationManager:
 
     def load_controller_checkpoint(self, filename: str) -> bool:
         """Load selected checkpoint weights into both DQN agent and active controller."""
-        ckpt_path = Path("checkpoints") / filename
-        ok = self.dqn_controller.load_checkpoint(ckpt_path)
-        if ok:
-            # Also synchronize the trainer/evaluator agent
-            self.dqn_agent.load_checkpoint(ckpt_path)
-        return ok
+        return self.load_dqn_checkpoint(filename)
 
     def unload_controller_checkpoint(self) -> None:
         """Explicitly unload checkpoint to demonstrate deterministic fallback."""
         self.dqn_controller.unload_checkpoint()
+        self.checkpoint_load_status = {
+            "success": False,
+            "filename": "UNLOADED",
+            "filepath": "",
+            "device": str(self.dqn_agent.device),
+            "error": "Model explicitly unloaded by operator. Operating in Safe Fallback Mode.",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "total_steps": self.dqn_agent.total_steps,
+            "episodes_trained": self.dqn_agent.episodes_trained,
+            "epsilon": self.dqn_agent.epsilon,
+            "metadata": None,
+        }
 
     def set_controller_fallback_policy(self, policy: EvaluationPolicy) -> None:
         """Set fallback policy used when model is unready."""

@@ -451,8 +451,91 @@ def test_checkpoint_validation_rejects_incompatible_architecture():
 
         # Incompatible net expecting 12 features instead of 8
         incompatible_net = QNetwork(state_dim=12, action_dim=5)
-        with pytest.raises(CheckpointError):
+        with pytest.raises(CheckpointError) as exc_info:
             load_checkpoint(ckpt_path, online_network=incompatible_net)
+        assert "state_dim=12" in str(exc_info.value)
+
+
+def test_checkpoint_action_dimension_mismatch_rejected():
+    """Verify checkpoint loader rejects action dimension mismatch."""
+    online_net = QNetwork(state_dim=8, action_dim=5)
+    target_net = QNetwork(state_dim=8, action_dim=5)
+    opt = torch.optim.Adam(online_net.parameters())
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ckpt_path = Path(tmpdir) / "action_mismatch.pt"
+        save_checkpoint(
+            filepath=ckpt_path,
+            online_network=online_net,
+            target_network=target_net,
+            optimizer=opt,
+            epsilon=0.5,
+            episodes_trained=1,
+            total_steps=10,
+        )
+
+        # Incompatible net expecting 3 actions instead of 5
+        incompatible_net = QNetwork(state_dim=8, action_dim=3)
+        with pytest.raises(CheckpointError) as exc_info:
+            load_checkpoint(ckpt_path, online_network=incompatible_net)
+        assert "action_dim=3" in str(exc_info.value)
+
+
+def test_checkpoint_loading_missing_and_corrupted_files():
+    """Verify loading non-existent and corrupted checkpoints records actual error without crashing."""
+    agent = DQNAgent(random_seed=42)
+
+    # 1. Missing file
+    missing_path = Path("checkpoints/does_not_exist_9999.pt")
+    ok = agent.load_checkpoint(missing_path)
+    assert ok is False
+    assert agent.last_load_error is not None
+    assert "not found" in agent.last_load_error.lower()
+
+    # 2. Corrupted file
+    with tempfile.TemporaryDirectory() as tmpdir:
+        corrupted_path = Path(tmpdir) / "corrupted.pt"
+        with open(corrupted_path, "wb") as f:
+            f.write(b"NOT_A_VALID_PYTORCH_CHECKPOINT_GARBAGE_BYTES")
+
+        ok = agent.load_checkpoint(corrupted_path)
+        assert ok is False
+        assert agent.last_load_error is not None
+        assert "corrupted" in agent.last_load_error.lower() or "invalid" in agent.last_load_error.lower()
+
+
+def test_dashboard_manager_checkpoint_persistent_status():
+    """Verify DashboardSimulationManager preserves persistent status across loads and failures."""
+    from rl_ack.dashboard.state import DashboardSimulationManager
+
+    manager = DashboardSimulationManager(random_seed=42)
+
+    # 1. Successful load of genuine checkpoint
+    ok = manager.load_dqn_checkpoint("dqn_best.pt")
+    assert ok is True
+    status = manager.checkpoint_load_status
+    assert status is not None
+    assert status["success"] is True
+    assert status["filename"] == "dqn_best.pt"
+    assert status["device"] == "cpu"
+    assert status["error"] is None
+    assert status["metadata"] is not None
+    assert status["metadata"]["state_dim"] == 8
+    assert status["metadata"]["action_dim"] == 5
+    assert status["total_steps"] > 0
+
+    # 2. Failed load of missing checkpoint
+    ok_fail = manager.load_dqn_checkpoint("non_existent_model_123.pt")
+    assert ok_fail is False
+    status_fail = manager.checkpoint_load_status
+    assert status_fail is not None
+    assert status_fail["success"] is False
+    assert status_fail["filename"] == "non_existent_model_123.pt"
+    assert "not found" in status_fail["error"].lower()
+
+    # 3. Previous valid agent was not corrupted
+    assert manager.dqn_agent.config.state_dim == 8
+    assert manager.dqn_agent.config.action_dim == 5
 
 
 # ==============================================================================

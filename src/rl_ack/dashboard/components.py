@@ -1081,21 +1081,48 @@ def render_dqn_tab(manager: Any) -> None:
         if available_ckpts:
             col_ck1, col_ck2 = st.columns([2, 1])
             with col_ck1:
-                selected_ckpt = st.selectbox("Available Checkpoints (.pt)", options=available_ckpts, key="dqn_selected_checkpoint")
+                selected_ckpt = st.selectbox(
+                    "Available Checkpoints (.pt)",
+                    options=available_ckpts,
+                    key="dqn_selected_checkpoint",
+                )
             with col_ck2:
                 if st.button("📥 Load Selected Checkpoint", width="stretch", key="dqn_btn_load_checkpoint"):
-                    ok = manager.load_dqn_checkpoint(selected_ckpt)
-                    if ok:
-                        st.success(f"✅ Successfully loaded `{selected_ckpt}`! Agent weights and epsilon updated.")
-                    else:
-                        st.error(f"❌ Failed to load `{selected_ckpt}`. Incompatible format or architecture.")
+                    manager.load_dqn_checkpoint(selected_ckpt)
                     st.rerun()
 
+            # Persistent Status on Checkpoint Manager Page
+            status = getattr(manager, "checkpoint_load_status", None)
+            if status is not None:
+                if status.get("success"):
+                    meta = status.get("metadata") or {}
+                    s_dim = meta.get("state_dim", 8)
+                    a_dim = meta.get("action_dim", 5)
+                    st.success(
+                        f"✅ **Model Loaded Successfully!**\n\n"
+                        f"- **Checkpoint File:** `{status['filename']}`\n"
+                        f"- **Target Device:** `{status['device']}`\n"
+                        f"- **Architecture Verified:** State Dim = `{s_dim}`, Action Dim = `{a_dim}` (Matches QNetwork `8 -> 64 -> 32 -> 5`)\n"
+                        f"- **Trained Episodes:** `{status.get('episodes_trained', 0)}` | **Total Steps:** `{status.get('total_steps', 0)}` | **Epsilon (ε):** `{status.get('epsilon', 0.0):.4f}`\n"
+                        f"- **Status:** Active in both Evaluation and Online ACK Controller."
+                    )
+                else:
+                    st.error(
+                        f"❌ **Model Not Loaded:**\n\n"
+                        f"- **Target File:** `{status.get('filename', 'Unknown')}`\n"
+                        f"- **Error Details:** {status.get('error', 'Incompatible format or architecture.')}\n"
+                        f"- **Integrity Guarantee:** Previous model weights were preserved unchanged."
+                    )
+            else:
+                st.info("💡 Select a saved `.pt` checkpoint file above and click **📥 Load Selected Checkpoint** to restore model weights.")
+
+            st.markdown("---")
+            st.markdown("##### 📊 Active Agent Parameters")
             st.info(
-                f"**Current Agent Parameters:** Epsilon: `{manager.dqn_agent.epsilon:.4f}` | "
-                f"Trained Episodes: `{manager.dqn_agent.episodes_trained}` | "
-                f"Total Steps: `{manager.dqn_agent.total_steps}` | "
-                f"Device: `{manager.dqn_agent.device}`"
+                f"**Exploration Epsilon (ε):** `{manager.dqn_agent.epsilon:.4f}` | "
+                f"**Trained Episodes:** `{manager.dqn_agent.episodes_trained}` | "
+                f"**Total Steps:** `{manager.dqn_agent.total_steps}` | "
+                f"**Device:** `{manager.dqn_agent.device}`"
             )
         else:
             st.warning("⚠️ No saved checkpoints found in `checkpoints/`. Train the agent in the '🏋️ Agent Training Loop' tab to create checkpoints.")
